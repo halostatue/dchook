@@ -1,0 +1,80 @@
+name: Go CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-ci:
+    name: Go ${{ matrix.go-version }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - go-version: '1.26'
+            os: ubuntu-22.04
+          - go-version: '1.25'
+            os: ubuntu-22.04
+          - go-version: '1.26'
+            os: ubuntu-22.04
+            check_formatted: true
+            staticcheck: true
+            govulncheck: true
+
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            release-assets.githubusercontent.com:443
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v6.0.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - run: go mod download
+
+      - run: test -z "$(gofmt -l .)"
+        if: matrix.check_formatted
+
+      - run: go vet ./...
+
+      - run: go install honnef.co/go/tools/cmd/staticcheck@latest
+        if: matrix.staticcheck
+
+      - run: staticcheck ./...
+        if: matrix.staticcheck
+
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        if: matrix.govulncheck
+
+      - run: govulncheck ./...
+        if: matrix.govulncheck
+
+      - run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - run: go build ./...
