@@ -1,4 +1,4 @@
-# Dchook Security
+# dchook Security
 
 ## LLM-Generated Security Report Policy
 
@@ -10,7 +10,7 @@ agents.
 Security reports are accepted for the most recent major release with support for
 the previous major version ending immediately.
 
-Dchook supports the two most recent versions of Go.
+dchook supports the two most recent versions of Go.
 
 As of February 2026, the support list is:
 
@@ -19,8 +19,8 @@ As of February 2026, the support list is:
 | 1.25       |
 | 1.26       |
 
-The oldest supported version of Go will not be deprecated until the release of
-a new version of Go.
+The oldest supported version of Go will not be deprecated until the release of a
+new version of Go.
 
 ## Reporting a Vulnerability
 

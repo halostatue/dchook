@@ -1,5 +1,8 @@
 # dchook: `docker compose` Hook
 
+[![Go Report Card][shield-goreport]][goreport]
+[![Apache 2.0][shield-licence]][licence] ![Coveralls][shield-coveralls]
+
 Secure webhook receiver for updating Docker Compose deployments. Sits somewhere
 between manual `scp` or `git pull`, and full orchestration -- perfect for
 simpler production deployments that need automated updates from CI/CD.
@@ -17,7 +20,7 @@ simpler production deployments that need automated updates from CI/CD.
 ## Features
 
 `dchook` is security-forward. The listener has minimal configuration by design
-with hard-coded defaults to reduce any potential attack surface.
+with hard-coded defaults to reduce the potential attack surface.
 
 - Constant-time HMAC signature verification algorithms (SHA-256, SHA-384,
   SHA-512) may be restricted
@@ -25,6 +28,11 @@ with hard-coded defaults to reduce any potential attack surface.
   and tracked for ten minutes
 - Failed attempts apply fail2ban behaviour: two failures results in a one-hour
   rejection of any requests from the originating IP (v4 or normalized v6)
+- Client IP extraction respects `X-Forwarded-For` from trusted proxies (loopback
+  and private network ranges), falling back to `RemoteAddr` for direct
+  connections
+- `dchook-notify` will send at most 1MiB as the payload, and `dchook` refuses
+  any request body just over 1MiB
 - Secret files must be FIFOs (bash process substitution `<(echo 1)`) or regular
   files with 0600/0400 permissions
 - Compose files must exist on startup
@@ -64,13 +72,21 @@ during the build process for binaries on [releases][releases].
 `dchook` is configured via environment variables or command-line flags. Flags
 take precedence.
 
-| Variable                         | Flag                        | Required / Default     | Purpose                                         |
-| -------------------------------- | --------------------------- | ---------------------- | ----------------------------------------------- |
-| `DCHOOK_SECRET_FILE`             | `-s`                        | ✅                     | Path to file containing webhook secret          |
-| `DCHOOK_COMPOSE_FILE`            | `-c`                        | ✅                     | Path to `docker-compose.yml` to manage          |
-| `DCHOOK_PORT`                    | `-p`                        | 7999                   | HTTP port to listen on                          |
-| `DCHOOK_ALLOWED_ALGORITHMS`      | `--algorithms`              | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |
-| `DCHOOK_ENABLE_VERSION_ENDPOINT` | `--enable-version-endpoint` |                        | Enable `/version` endpoint                      |
+| Variable                    | Flag                        | Required / Default     | Purpose                                         |
+| --------------------------- | --------------------------- | ---------------------- | ----------------------------------------------- |
+| `DCHOOK_SECRET_FILE`        | `-s`                        | ✅                     | Path to file containing webhook secret          |
+| `DCHOOK_COMPOSE_FILE`       | `-c`                        | ✅                     | Path to `docker-compose.yml` to manage          |
+| `DCHOOK_BIND_ADDRESS`       | `-b`                        | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces) |
+| `DCHOOK_PORT`               | `-p`                        | 7999                   | HTTP port to listen on                          |
+| `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms`              | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |
+|                             | `--enable-version-endpoint` |                        | Enable `/version` endpoint                      |
+
+> [!WARNING]
+>
+> By default, `dchook` binds to `127.0.0.1` (localhost only). The bind address
+> can be modified with `DCHOOK_BIND_ADDRESS` or `-b`. `dchook` does _not_
+> perform TLS termination, so the use of a reverse proxy for TLS termination is
+> strongly recommended.
 
 ### CLI Tool (dchook-notify)
 
@@ -85,9 +101,9 @@ Flags take precedence.
 
 ## Usage
 
-### Systemd Service (Recommended)
+### As a `systemd` Service (Recommended)
 
-After downloading the binary from [releases][releases], set up as a systemd
+After downloading the binary from [releases][releases], set up as a `systemd`
 service:
 
 ```bash
@@ -111,8 +127,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dchook
 ```
 
-**Note:** Copy the generated secret to your CI/CD system (GitHub Secrets,
-environment variables, password manager, etc.) before continuing.
+> [!NOTE]
+>
+> Copy the generated secret to your CI/CD system (GitHub Secrets, environment
+> variables, password manager, etc.) before continuing.
 
 **Managing the service:**
 
@@ -145,6 +163,7 @@ services:
     environment:
       - DCHOOK_SECRET_FILE=/run/secrets/webhook_secret
       - DCHOOK_COMPOSE_FILE=/compose/app/docker-compose.yml
+      - DCHOOK_BIND_ADDRESS=0.0.0.0
       - DCHOOK_PORT=7999
     # Grant docker socket access - replace 999 with your docker group ID
     # Find with: getent group docker | cut -d: -f3
@@ -165,12 +184,16 @@ openssl rand -hex 32 > webhook_secret.txt
 
 #### Using dchook-notify CLI
 
+The CLI accepts JSON payloads or plain text. Payloads can be from files,
+standard input, or process substitution (FIFOs). If the payload is larger than
+1MiB in size, `dchook-notify` will terminate with an error.
+
 ```bash
 # Using environment variables
 export DCHOOK_URL="https://webhook.yourdomain.com/deploy"
 export DCHOOK_SECRET_FILE="/path/to/webhook_secret.txt"
 
-echo '{"image":"ghcr.io/user/app:latest"}' | dchook-notify -
+echo '{"image":"ghcr.io/user/app:1.23.4"}' | dchook-notify -
 dchook-notify payload.json
 
 # Using flags
@@ -180,9 +203,19 @@ dchook-notify -u https://webhook.yourdomain.com/deploy -s /path/to/secret payloa
 DCHOOK_SECRET_FILE=<(pass show webhook-secret) dchook-notify payload.json
 DCHOOK_SECRET_FILE=<(op read op://MyServer/DCHook/secret) dchook-notify payload.json
 
+# With process substitution for payload (FIFO)
+dchook-notify <(echo '{"dynamic":"payload"}')
+
 # With different algorithm
 dchook-notify -a sha512 payload.json
 ```
+
+**Payload Requirements:**
+
+- Maximum size: 1MiB
+- Must be valid JSON or printable UTF-8 text
+- Non-JSON text is automatically wrapped as a JSON string
+- Binary data or non-printable characters are rejected
 
 #### GitHub Actions Example
 
@@ -224,13 +257,10 @@ jobs:
         run: |
           gh release download v1.0.0 \
             --repo halostatue/dchook \
-            --pattern 'dchook-notify_*_linux_amd64.tar.gz' \
-            --output /tmp/dchook-notify.tar.gz
-          gh attestation verify /tmp/dchook-notify.tar.gz \
+            --pattern 'dchook-notify_*_linux_amd64.tar.gz'
+          gh attestation verify dchook-notify_*_linux_amd64.tar.gz \
             --repo halostatue/dchook
-          tar -xzf /tmp/dchook-notify.tar.gz -C /tmp dchook-notify
-          sudo mv /tmp/dchook-notify /usr/local/bin/
-          sudo chmod 755 /usr/local/bin/dchook-notify
+          tar -xzf dchook-notify_*_linux_amd64.tar.gz -C /usr/local/bin
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -260,8 +290,11 @@ jobs:
 SECRET=$(cat /path/to/webhook_secret.txt)
 PAYLOAD='{"image":"ghcr.io/user/app:latest"}'
 
-# Create envelope (simplified - real envelope includes version/commit/timestamp)
-BODY=$(echo "$PAYLOAD" | jq -c '{dchook: {version: "v1.0.0", commit: "manual", timestamp: (now * 1000000 | floor)}, payload: .}')
+# Create envelope
+# Structure: {dchook: {version, commit, timestamp}, payload: <your-data>}
+# timestamp must be a string (Unix microseconds) to avoid JSON precision loss
+TIMESTAMP=$(date +%s%6N)
+BODY=$(echo "$PAYLOAD" | jq -c --arg ts "$TIMESTAMP" '{dchook: {version: "v1.0.0", commit: "manual", timestamp: $ts}, payload: .}')
 
 # Generate signature
 SIGNATURE="sha256:$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)"
@@ -269,9 +302,30 @@ SIGNATURE="sha256:$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut
 # Send webhook
 curl -X POST https://webhook.yourdomain.com/deploy \
   -H "Content-Type: application/json" \
-  -H "Updater-Signature: $SIGNATURE" \
+  -H "Dchook-Signature: $SIGNATURE" \
   -d "$BODY"
 ```
+
+**Webhook Payload Structure:**
+
+```json
+{
+  "dchook": {
+    "version": "v1.0.0",
+    "commit": "abc123",
+    "timestamp": "1739923200000000"
+  },
+  "payload": {
+    "image": "ghcr.io/user/app:latest",
+    "commit": "def456"
+  }
+}
+```
+
+- `dchook.version` - Client version (must match server major.minor)
+- `dchook.commit` - Client commit (must match if versions are identical)
+- `dchook.timestamp` - Unix microseconds as string (valid for ±5 minutes)
+- `payload` - Your application data (any valid JSON)
 
 ## Endpoints
 
@@ -282,6 +336,7 @@ curl -X POST https://webhook.yourdomain.com/deploy \
 ## Development
 
 See the `example/` directory for a complete local testing environment with:
+
 - Dockerfile for building a test image
 - Docker Compose setup with dchook listener and managed app
 - Justfile with recipes for common tasks (build, test, generate secrets)
@@ -289,3 +344,10 @@ See the `example/` directory for a complete local testing environment with:
 Run `just --list` in the `example/` directory to see available commands.
 
 [releases]: https://github.com/halostatue/dchook/releases
+[godoc]: https://pkg.go.dev/github.com/halostatue/dchook
+[goreport]: https://goreportcard.com/report/github.com/halostatue/dchook
+[licence]: https://github.com/halostatue/dchook/blob/main/LICENCE.md
+[shield-godoc]: https://img.shields.io/badge/go-reference-blue.svg?style=for-the-badge "Go Reference"
+[shield-goreport]: https://goreportcard.com/badge/github.com/halostatue/dchook?style=for-the-badge "Go Report Card"
+[shield-licence]: https://img.shields.io/github/license/halostatue/dchook?style=for-the-badge&label=licence "Apache 2.0"
+[shield-coveralls]: https://img.shields.io/coverallsCoverage/github/halostatue/dchook?style=for-the-badge "Coverage"

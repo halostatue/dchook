@@ -1,3 +1,5 @@
 module github.com/halostatue/dchook
 
-go 1.26
+go 1.24
+
+require github.com/abczzz13/clientip v0.0.6 // indirect

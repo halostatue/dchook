@@ -1,13 +1,12 @@
 # Contributing
 
-Contribution to Dchook is encouraged: bug reports, discussions,
-feature requests, or code contributions. New features should be proposed and
-discussed in an [issue][issues].
+Contribution to dchook is encouraged: bug reports, discussions, feature
+requests, or code contributions. New features should be proposed and discussed
+in an [issue][issues].
 
 Before contributing patches, please read the [Licence](./LICENCE.md).
 
-Dchook is governed under the
-[Contributor Covenant Code of Conduct][cccoc].
+dchook is governed under the [Contributor Covenant Code of Conduct][cccoc].
 
 ## Code Guidelines
 
@@ -18,7 +17,7 @@ I have several guidelines to contributing code through pull requests:
 
 - I use code formatters, static analysis tools, and linting to ensure consistent
   styles and formatting. There should be no warnings output from compile or test
-  run processes. I use `gofmt`, `go vet`, and `staticcheck`.
+  run processes. I use `gofumpt`, `go vet`, and `staticcheck`.
 
 - Proposed changes should be on a thoughtfully-named topic branch and organized
   into logical commit chunks as appropriate.
@@ -40,17 +39,17 @@ I have several guidelines to contributing code through pull requests:
 
 ## AI Contribution Policy
 
-Dchook contributions must be well understood by the submitter
-and that the developer can attest to the [Developer Certificate of Origin][dco]
-for each pull request (see [LICENCE](LICENCE.md)).
+dchook contributions must be well understood by the submitter and that the
+developer can attest to the [Developer Certificate of Origin][dco] for each pull
+request (see [LICENCE](LICENCE.md)).
 
 Any contribution (bug, feature request, or pull request) that uses undeclared AI
 output will be rejected.
 
 ### Commit Conventions
 
-Dchook has adopted a variation of the Conventional Commits
-format for commit messages. The following types are permitted:
+dchook has adopted a variation of the Conventional Commits format for commit
+messages. The following types are permitted:
 
 | Type    | Purpose                                               |
 | ------- | ----------------------------------------------------- |
@@ -85,7 +84,7 @@ required metadata trailers are:
 
 ## Contributors
 
-Austin Ziegler created Dchook.
+Austin Ziegler created dchook.
 
 [cbeams]: https://cbea.ms/git-commit/
 [cccoc]: ./CODE_OF_CONDUCT.md
