@@ -1,0 +1,22 @@
+services:
+  # The dchook listener
+  dchook:
+    image: example-dchook:latest
+    ports:
+      - "7999:7999"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./app:/compose/app:ro
+    secrets:
+      - webhook_secret
+    environment:
+      - DCHOOK_SECRET_FILE=/run/secrets/webhook_secret
+      - DCHOOK_COMPOSE_FILE=/compose/app/docker-compose.yml
+      - DCHOOK_BIND_ADDRESS=0.0.0.0
+      - DCHOOK_PORT=7999
+    user: "65534:991"
+    restart: unless-stopped
+
+secrets:
+  webhook_secret:
+    file: ./webhook_secret.txt
