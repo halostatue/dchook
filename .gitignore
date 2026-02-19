@@ -1,5 +1,8 @@
 # Binaries
-dchook
+/dchook
+/dchook-notify
+/cmd/dchook/dchook
+/cmd/dchook-notify/dchook-notify
 *.exe
 *.exe~
 *.dll
@@ -19,3 +22,8 @@ go.work.sum
 # Build artifacts
 /dist/
 /tmp/
+
+example/webhook_secret.txt
+example/dchook-notify
+
+/coverage.*

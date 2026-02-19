@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - go-version: '1.26'
+          - go-version: '1.24'
             os: ubuntu-22.04
           - go-version: '1.25'
             os: ubuntu-22.04
@@ -45,20 +45,24 @@ jobs:
             github.com:443
             proxy.golang.org:443
             sum.golang.org:443
+            vuln.go.dev:443
             release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v6.0.0
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
 
       - run: go mod download
 
-      - run: test -z "$(gofmt -l .)"
+      - run: go install mvdan.cc/gofumpt@latest
+        if: matrix.check_formatted
+
+      - run: test -z "$(gofumpt -l .)"
         if: matrix.check_formatted
 
       - run: go vet ./...

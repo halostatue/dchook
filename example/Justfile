@@ -1,0 +1,120 @@
+# dchook example justfile
+
+# Default recipe - show available commands
+@_default:
+    just --list
+
+# Generate a new webhook secret
+@generate:
+    printf "Generating new webhook secret..."
+    openssl rand -hex 32 > webhook_secret.txt
+    chmod 400 webhook_secret.txt
+    echo "\r✓ New secret generated in webhook_secret.txt (permissions: 0400)"
+
+# Build the notifier binary
+@build:
+    echo "Building dchook-notify..."
+    cd .. && go build -o example/dchook-notify ./cmd/dchook-notify
+
+# Build the dchook image
+@build-image:
+    echo "Building dchook image..."
+    docker build -t example-dchook:latest -f Dockerfile ..
+
+# Start the services
+@up: build build-image
+    echo "Starting services..."
+    docker compose up -d
+    echo "Starting app..."
+    docker compose -f app/docker-compose.yml -p compose up -d
+    echo "Waiting for services to be ready..."
+    sleep 2
+    echo "\nServices running:"
+    docker compose ps
+    docker ps --filter "name=compose-web"
+    echo "\nWeb: http://localhost:8081"
+    echo "dchook health: http://localhost:7999/health"
+    echo "dchook version: http://localhost:7999/version"
+
+# Stop the services
+@down:
+    echo "Stopping services..."
+    docker compose down
+    echo "Stopping app..."
+    docker compose -f app/docker-compose.yml -p compose down 2>/dev/null || true
+
+# Restart the services
+@restart: down up
+
+# Show service logs
+@logs:
+    docker compose logs -f dchook
+
+# Test successful webhook
+@success: build
+    echo "Sending successful webhook..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
+     ./dchook-notify payload.json
+    echo "\nCheck logs with: just logs"
+
+# Test rate limiting (send 2 requests quickly)
+@rate-limited: build
+    echo "Sending first webhook (should succeed)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
+     ./dchook-notify payload.json
+    echo "\nSending second webhook immediately (should be rate limited)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
+     ./dchook-notify payload.json || echo "\n✓ Rate limited as expected"
+
+# Test failed authentication (wrong secret)
+@failed: build
+    echo "Creating temporary bad secret..."
+    echo "wrong-secret" > /tmp/bad_secret.txt
+    chmod 600 /tmp/bad_secret.txt
+    echo "Sending webhook with wrong secret (should fail)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
+     ./dchook-notify payload.json || echo "\n✓ Failed as expected"
+    rm /tmp/bad_secret.txt
+
+# Test ban (2 failed attempts)
+@banned: build
+    echo "Creating temporary bad secret..."
+    echo "wrong-secret" > /tmp/bad_secret.txt
+    chmod 600 /tmp/bad_secret.txt
+    echo "Sending first failed webhook..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
+     ./dchook-notify payload.json 2>&1 || true
+    echo "\nSending second failed webhook (should trigger ban)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
+     ./dchook-notify payload.json 2>&1 || true
+    echo "\nSending third request (should be banned/forbidden)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
+     ./dchook-notify payload.json 2>&1 || true
+    echo "\nSending fourth request (should still be banned)..."
+    DCHOOK_URL="http://localhost:7999/deploy" \
+     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
+     ./dchook-notify payload.json 2>&1 || echo "\n✓ Banned as expected"
+    rm /tmp/bad_secret.txt
+    echo "\nNote: Ban lasts 1 hour. Restart to clear: just restart"
+
+# Check service health
+@health:
+    echo "Checking dchook health..."
+    curl -s http://localhost:7999/health
+    echo "\nChecking dchook version..."
+    curl -s http://localhost:7999/version
+    echo "\nChecking web service..."
+    curl -s http://localhost:8081 | head -n 5
+
+# Clean up everything
+@clean: down
+    echo "Cleaning up..."
+    rm -f dchook-notify
+    echo "Done"
