@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: dchook
+    main: ./cmd/dchook
+    binary: dchook
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: dchook-notify
+    main: ./cmd/dchook-notify
+    binary: dchook-notify
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - CHANGELOG.md
+      - LICENCE.md
+      - SECURITY.md
+      - licences/*
+    wrap_in_directory: true
+
+signs:
+  - cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    certificate: '${artifact}.pem'
+    args:
+      - sign-blob
+      - '--bundle=${signature}'
+      - '${artifact}'
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+changelog:
+  disable: true
+
+checksum:
+  name_template: checksum.txt
+
+release:
+  github:
+    owner: halostatue
+    name: dchook
+  draft: false
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  header: |
+    See [CHANGELOG.md][changelog] for release notes.
+  footer: |
+    ---
+    Released by [GoReleaser][goreleaser].
+
+    [changelog]: https://github.com/halostatue/dchook/blob/main/CHANGELOG.md#:~:text=,{{.Version}},,-/
+    [goreleaser]: https://github.com/goreleaser/goreleaser

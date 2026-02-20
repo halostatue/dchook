@@ -1,3 +1,4 @@
 [tools]
 go = "1.26"
 gofumpt = "latest"
+goreleaser = "latest"
