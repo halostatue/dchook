@@ -257,10 +257,13 @@ jobs:
         run: |
           gh release download v1.0.0 \
             --repo halostatue/dchook \
-            --pattern 'dchook-notify_*_linux_amd64.tar.gz'
-          gh attestation verify dchook-notify_*_linux_amd64.tar.gz \
+            --pattern 'dchook-notify_Linux_x86_64.tar.gz'
+          gh attestation verify dchook-notify_Linux_x86_64.tar.gz \
             --repo halostatue/dchook
-          tar -xzf dchook-notify_*_linux_amd64.tar.gz -C /usr/local/bin
+          tar -xzf dchook-notify_Linux_x86_64.tar.gz \
+            --strip-components=1 \
+            -C /usr/local/bin \
+            dchook-notify_Linux_x86_64/dchook-notify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -75,11 +75,11 @@ jobs:
         run: |
           mkdir -p dist/linux_amd64 dist/linux_arm64
           gh release download "${GITHUB_REF_NAME}" \
-            --pattern 'dchook_*_linux_amd64.tar.gz' \
-            --pattern 'dchook_*_linux_arm64.tar.gz' \
+            --pattern 'dchook_Linux_x86_64.tar.gz' \
+            --pattern 'dchook_Linux_arm64.tar.gz' \
             --dir /tmp
-          tar -xzf /tmp/dchook_*_linux_amd64.tar.gz -C dist/linux_amd64 dchook
-          tar -xzf /tmp/dchook_*_linux_arm64.tar.gz -C dist/linux_arm64 dchook
+          tar -xzf /tmp/dchook_Linux_x86_64.tar.gz -C dist/linux_amd64 --strip-components=1 dchook_Linux_x86_64/dchook
+          tar -xzf /tmp/dchook_Linux_arm64.tar.gz -C dist/linux_arm64 --strip-components=1 dchook_Linux_arm64/dchook
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
