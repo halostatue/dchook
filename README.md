@@ -52,9 +52,9 @@ during the build process for binaries on [releases][releases].
 ### Listener (dchook)
 
 - Download from [releases][releases] (recommended)
-- Build from source `go install github.com/halostatue/dchook/cmd/dchook@v1.0.0`
+- Build from source `go install github.com/halostatue/dchook/cmd/dchook@v1.0.1`
 - Use the `dchook-listener` container image:
-  `docker pull ghcr.io/halostatue/dchook/dchook-listener:v1.0.0`
+  `docker pull ghcr.io/halostatue/dchook/dchook-listener:1.0.1`
 
   The container image uses the signed, attested binaries from
   [releases][releases] and is itself signed and attested.
@@ -63,7 +63,7 @@ during the build process for binaries on [releases][releases].
 
 - Download from [releases][releases]
 - Build from source
-  `go install github.com/halostatue/dchook/cmd/dchook-notify@v1.0.0`
+  `go install github.com/halostatue/dchook/cmd/dchook-notify@v1.0.1`
 
 ## Configuration
 
@@ -152,7 +152,7 @@ For containerized environments:
 ```yaml
 services:
   webhook:
-    image: ghcr.io/halostatue/dchook/dchook-listener:v1.0.0
+    image: ghcr.io/halostatue/dchook/dchook-listener:1.0.1
     ports:
       - "7999:7999"
     volumes:
@@ -255,7 +255,7 @@ jobs:
 
       - name: Install dchook-notify
         run: |
-          gh release download v1.0.0 \
+          gh release download v1.0.1 \
             --repo halostatue/dchook \
             --pattern 'dchook-notify_Linux_x86_64.tar.gz'
           gh attestation verify dchook-notify_Linux_x86_64.tar.gz \
@@ -297,7 +297,7 @@ PAYLOAD='{"image":"ghcr.io/user/app:latest"}'
 # Structure: {dchook: {version, commit, timestamp}, payload: <your-data>}
 # timestamp must be a string (Unix microseconds) to avoid JSON precision loss
 TIMESTAMP=$(date +%s%6N)
-BODY=$(echo "$PAYLOAD" | jq -c --arg ts "$TIMESTAMP" '{dchook: {version: "v1.0.0", commit: "manual", timestamp: $ts}, payload: .}')
+BODY=$(echo "$PAYLOAD" | jq -c --arg ts "$TIMESTAMP" '{dchook: {version: "v1.0.1", commit: "manual", timestamp: $ts}, payload: .}')
 
 # Generate signature
 SIGNATURE="sha256:$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)"
@@ -314,7 +314,7 @@ curl -X POST https://webhook.yourdomain.com/deploy \
 ```json
 {
   "dchook": {
-    "version": "v1.0.0",
+    "version": "v1.0.1",
     "commit": "abc123",
     "timestamp": "1739923200000000"
   },

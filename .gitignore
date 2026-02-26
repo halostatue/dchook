@@ -23,6 +23,7 @@ go.work.sum
 /dist/
 /tmp/
 
+example/client_secret.txt
 example/webhook_secret.txt
 example/dchook-notify
 

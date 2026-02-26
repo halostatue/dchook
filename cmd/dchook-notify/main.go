@@ -15,6 +15,24 @@ import (
 	"github.com/halostatue/dchook/internal/dchook"
 )
 
+const (
+	ExitSuccess = 0
+
+	// Pre-send errors (1-9)
+	ExitConfigError  = 1 // Missing URL, secret file, invalid algorithm
+	ExitPayloadError = 2 // File errors, too large, invalid format, marshal error
+	ExitRequestError = 3 // Request creation or send error
+
+	// Response errors (10+) - map to HTTP status where possible
+	ExitBadRequest      = 40 // 400
+	ExitUnauthorized    = 41 // 401
+	ExitForbidden       = 43 // 403
+	ExitPayloadTooLarge = 13 // 413
+	ExitRateLimited     = 29 // 429
+	ExitServerError     = 50 // 500
+	ExitUnknownStatus   = 99 // Other non-202
+)
+
 var (
 	version = "dev"
 	commit  = "unknown"
@@ -22,9 +40,29 @@ var (
 	url         = flag.String("u", "", "Webhook endpoint URL")
 	secretFile  = flag.String("s", "", "Path to webhook secret file")
 	algorithm   = flag.String("a", "", "Hash algorithm (sha256, sha384, sha512)")
+	quiet       = flag.Bool("q", false, "Quiet mode (suppress output, return only exit code)")
 	showVersion = flag.Bool("version", false, "Show version information")
 	showHelp    = flag.Bool("help", false, "Show help message")
 )
+
+func halt(code int, format string, args ...interface{}) {
+	if !*quiet {
+		fmt.Fprintf(os.Stderr, format, args...)
+		if len(format) > 0 && format[len(format)-1] != '\n' {
+			fmt.Fprintln(os.Stderr)
+		}
+	}
+	os.Exit(code)
+}
+
+func success(format string, args ...interface{}) {
+	if !*quiet {
+		fmt.Printf(format, args...)
+		if len(format) > 0 && format[len(format)-1] != '\n' {
+			fmt.Println()
+		}
+	}
+}
 
 func main() {
 	flag.Usage = func() {
@@ -44,25 +82,22 @@ func main() {
 
 	if flag.NArg() != 1 {
 		flag.Usage()
-		os.Exit(1)
+		os.Exit(ExitConfigError)
 	}
 
 	webhookURL, err := dchook.FlagValue(*url, "DCHOOK_URL", "-u")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		halt(ExitConfigError, "%v", err)
 	}
 
 	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "-s")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		halt(ExitConfigError, "%v", err)
 	}
 
 	secretBytes, err := os.ReadFile(secretFilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading secret file: %v\n", err)
-		os.Exit(1)
+		halt(ExitConfigError, "Error reading secret file: %v", err)
 	}
 	secret := strings.TrimSpace(string(secretBytes))
 
@@ -72,59 +107,48 @@ func main() {
 	}
 
 	if algo != "sha256" && algo != "sha384" && algo != "sha512" {
-		fmt.Fprintf(os.Stderr, "Error: Invalid algorithm '%s' (must be sha256, sha384, or sha512)\n", algo)
-		os.Exit(1)
+		halt(ExitConfigError, "Error: Invalid algorithm '%s' (must be sha256, sha384, or sha512)", algo)
 	}
 
 	bodyFile := flag.Arg(0)
 	var payloadBody []byte
 
 	if bodyFile == "-" {
-		// Read up to MaxPayloadSize + 1 byte to detect oversized input
 		payloadBody, err = io.ReadAll(io.LimitReader(os.Stdin, dchook.MaxPayloadSize+1))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
-			os.Exit(1)
+			halt(ExitPayloadError, "Error reading stdin: %v", err)
 		}
 		if len(payloadBody) > dchook.MaxPayloadSize {
-			fmt.Fprintf(os.Stderr, "Error: Stdin payload exceeds 1MiB limit\n")
-			os.Exit(1)
+			halt(ExitPayloadError, "Error: Stdin payload exceeds 1MiB limit")
 		}
 	} else {
 		info, err := os.Stat(bodyFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-			os.Exit(1)
+			halt(ExitPayloadError, "Error reading file: %v", err)
 		}
 		if info.Mode().IsRegular() && info.Size() > dchook.MaxPayloadSize {
-			fmt.Fprintf(os.Stderr, "Error: Payload file too large (%d bytes, max 1MB)\n", info.Size())
-			os.Exit(1)
+			halt(ExitPayloadError, "Error: Payload file too large (%d bytes, max 1MB)", info.Size())
 		}
 
 		f, err := os.Open(bodyFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening file: %v\n", err)
-			os.Exit(1)
+			halt(ExitPayloadError, "Error opening file: %v", err)
 		}
 		defer f.Close()
 
-		// Read up to 1MiB + 1 byte to detect oversized input
 		payloadBody, err = io.ReadAll(io.LimitReader(f, dchook.MaxPayloadSize+1))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-			os.Exit(1)
+			halt(ExitPayloadError, "Error reading file: %v", err)
 		}
 		if len(payloadBody) > dchook.MaxPayloadSize {
-			fmt.Fprintf(os.Stderr, "Error: Payload exceeds 1MiB limit\n")
-			os.Exit(1)
+			halt(ExitPayloadError, "Error: Payload exceeds 1MiB limit")
 		}
 	}
 
 	var payload interface{}
 	if err := json.Unmarshal(payloadBody, &payload); err != nil {
 		if !dchook.IsPrintableUTF8(payloadBody) {
-			fmt.Fprintf(os.Stderr, "Error: Payload must be valid JSON or printable UTF-8 text\n")
-			os.Exit(1)
+			halt(ExitPayloadError, "Error: Payload must be valid JSON or printable UTF-8 text")
 		}
 		payload = string(payloadBody)
 	}
@@ -140,16 +164,14 @@ func main() {
 
 	body, err := json.Marshal(envelope)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling envelope: %v\n", err)
-		os.Exit(1)
+		halt(ExitPayloadError, "Error marshaling envelope: %v", err)
 	}
 
 	signature := dchook.GenerateSignature(body, secret, algo)
 
 	req, err := http.NewRequest("POST", webhookURL, strings.NewReader(string(body)))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating request: %v\n", err)
-		os.Exit(1)
+		halt(ExitRequestError, "Error creating request: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -158,24 +180,40 @@ func main() {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error sending webhook: %v\n", err)
-		os.Exit(1)
+		halt(ExitRequestError, "Error sending webhook: %v", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode == dchook.DeployAcceptedStatus {
-		fmt.Printf("✓ Webhook accepted (status: %d)\n", resp.StatusCode)
-		if len(respBody) > 0 {
+		success("✓ Webhook accepted (status: %d)", resp.StatusCode)
+		if len(respBody) > 0 && !*quiet {
 			fmt.Printf("Response: %s\n", string(respBody))
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "✗ Webhook rejected (status: %d)\n", resp.StatusCode)
+		msg := fmt.Sprintf("✗ Webhook rejected (status: %d)", resp.StatusCode)
 		if len(respBody) > 0 {
-			fmt.Fprintf(os.Stderr, "Response: %s\n", string(respBody))
+			msg += fmt.Sprintf("\nResponse: %s", string(respBody))
 		}
-		os.Exit(1)
+
+		// Map HTTP status to exit code
+		switch resp.StatusCode {
+		case 400:
+			halt(ExitBadRequest, "%s", msg)
+		case 401:
+			halt(ExitUnauthorized, "%s", msg)
+		case 403:
+			halt(ExitForbidden, "%s", msg)
+		case 413:
+			halt(ExitPayloadTooLarge, "%s", msg)
+		case 429:
+			halt(ExitRateLimited, "%s", msg)
+		case 500:
+			halt(ExitServerError, "%s", msg)
+		default:
+			halt(ExitUnknownStatus, "%s", msg)
+		}
 	}
 }
 

@@ -1,120 +1,239 @@
-# dchook example justfile
+# dchook example/integration Justfile
+
+webhook_secret := justfile_dir() / "webhook_secret.txt"
+client_secret := if env("CI", '') != '' { justfile_dir() / "client_secret.txt" } else { webhook_secret }
+app_compose := justfile_dir() / "app/docker-compose.yml"
+dchook_compose := justfile_dir() / "docker-compose.yml"
+dchook_notify := justfile_dir() / "dchook-notify"
+export HEALTH_URL := "http://localhost:7999/health"
+export DCHOOK_URL := "http://localhost:7999/deploy"
 
 # Default recipe - show available commands
 @_default:
     just --list
 
 # Generate a new webhook secret
-@generate:
+generate:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    rm -f {{ webhook_secret }} {{ client_secret }}
+
     printf "Generating new webhook secret..."
-    openssl rand -hex 32 > webhook_secret.txt
-    chmod 400 webhook_secret.txt
-    echo "\r✓ New secret generated in webhook_secret.txt (permissions: 0400)"
 
-# Build the notifier binary
-@build:
-    echo "Building dchook-notify..."
-    cd .. && go build -o example/dchook-notify ./cmd/dchook-notify
+    openssl rand -hex 32 > {{ webhook_secret }}
+    chmod 0400 {{ webhook_secret }}
 
-# Build the dchook image
-@build-image:
-    echo "Building dchook image..."
-    docker build -t example-dchook:latest -f Dockerfile ..
+    if [[ -n "${CI}" ]]; then
+      cp {{ webhook_secret }} {{ client_secret }}
+    fi
 
-# Start the services
-@up: build build-image
-    echo "Starting services..."
-    docker compose up -d
-    echo "Starting app..."
-    docker compose -f app/docker-compose.yml -p compose up -d
-    echo "Waiting for services to be ready..."
-    sleep 2
-    echo "\nServices running:"
-    docker compose ps
-    docker ps --filter "name=compose-web"
-    echo "\nWeb: http://localhost:8081"
-    echo "dchook health: http://localhost:7999/health"
-    echo "dchook version: http://localhost:7999/version"
+    printf "\r✓ New secret generated (permissions: 0400)\n"
 
-# Stop the services
-@down:
-    echo "Stopping services..."
-    docker compose down
-    echo "Stopping app..."
-    docker compose -f app/docker-compose.yml -p compose down 2>/dev/null || true
+# Start dchook and app
+up: _build _build_image
+    #!/usr/bin/env bash
 
-# Restart the services
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    docker compose -f {{ app_compose }} -p compose up -d >/dev/null 2>&1
+    docker compose -f {{ dchook_compose }} up -d >/dev/null 2>&1
+
+    echo "Waiting for dchook to be ready..."
+    for i in $(seq 1 30); do
+      if curl -sf "${HEALTH_URL}" >/dev/null 2>&1; then
+        break
+      fi
+
+      if ((i >= 30)); then
+        echo "dchook failed to start"
+        docker compose -f {{ dchook_compose }} logs dchook
+        exit 1
+      fi
+
+      sleep 1
+    done
+
+# Stop dchook and app
+down:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    docker compose -f {{ dchook_compose }} down >/dev/null 2>&1
+    docker compose -f {{ app_compose }} -p compose down >/dev/null 2>&1
+
+# Restart dchook and app
 @restart: down up
 
 # Show service logs
-@logs:
-    docker compose logs -f dchook
+logs:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    docker compose -f {{ dchook_compose }} logs dchook
 
 # Test successful webhook
-@success: build
-    echo "Sending successful webhook..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
-     ./dchook-notify payload.json
-    echo "\nCheck logs with: just logs"
+success:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE={{ client_secret }}
+
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✓ Successful dchook trigger"
+    else
+      echo "𐄂 Error sending dchook trigger (exit code $?)"
+      exit 1
+    fi
+
+    just logs
 
 # Test rate limiting (send 2 requests quickly)
-@rate-limited: build
-    echo "Sending first webhook (should succeed)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
-     ./dchook-notify payload.json
-    echo "\nSending second webhook immediately (should be rate limited)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="./webhook_secret.txt" \
-     ./dchook-notify payload.json || echo "\n✓ Rate limited as expected"
+rate-limited:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE={{ client_secret }}
+
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✓ Successful dchook trigger"
+    else
+      status=$?
+      echo "𐄂 Error sending dchook trigger (exit code ${status})"
+      exit ${status}
+    fi
+
+    if {{ dchook_notify }} -q payload.json; then
+      echo "𐄂 dchook trigger was not rate limited"
+      exit 1
+    else
+      status=$?
+
+      if ((status == 29)); then
+        echo "✓ dchook trigger was rate limited"
+      else
+        echo "𐄂 dchook trigger was not rate limited (exit code ${status})"
+        exit ${status}
+      fi
+    fi
 
 # Test failed authentication (wrong secret)
-@failed: build
-    echo "Creating temporary bad secret..."
-    echo "wrong-secret" > /tmp/bad_secret.txt
-    chmod 600 /tmp/bad_secret.txt
-    echo "Sending webhook with wrong secret (should fail)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
-     ./dchook-notify payload.json || echo "\n✓ Failed as expected"
-    rm /tmp/bad_secret.txt
+failed:
+    #!/usr/bin/env bash
 
-# Test ban (2 failed attempts)
-@banned: build
-    echo "Creating temporary bad secret..."
-    echo "wrong-secret" > /tmp/bad_secret.txt
-    chmod 600 /tmp/bad_secret.txt
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE="{{ justfile_dir() }}/bad_secret.$$.txt"
+
+    trap 'rm -f "${DCHOOK_SECRET_FILE}"' EXIT
+
+    echo "wrong-secret" >"${DCHOOK_SECRET_FILE}"
+    chmod 600 "${DCHOOK_SECRET_FILE}"
+
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✗ dchook trigger did not fail with bad secret"
+      exit 1
+    else
+      status=$?
+
+      if ((status == 41)); then
+        echo "✓ dchook trigger failed with unauthorized (exit code ${status})"
+      else
+        echo "✗ dchook trigger failed with unexpected exit code ${status} (expected 41)"
+        exit ${status}
+      fi
+    fi
+
+# Test ban (2 failed attempts trigger ban, 3rd gets 403)
+banned:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE="{{ justfile_dir() }}/bad_secret.$$.txt"
+
+    trap 'rm -f "${DCHOOK_SECRET_FILE}"' EXIT
+
+    echo "wrong-secret" >"${DCHOOK_SECRET_FILE}"
+    chmod 600 "${DCHOOK_SECRET_FILE}"
+
     echo "Sending first failed webhook..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
-     ./dchook-notify payload.json 2>&1 || true
-    echo "\nSending second failed webhook (should trigger ban)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
-     ./dchook-notify payload.json 2>&1 || true
-    echo "\nSending third request (should be banned/forbidden)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
-     ./dchook-notify payload.json 2>&1 || true
-    echo "\nSending fourth request (should still be banned)..."
-    DCHOOK_URL="http://localhost:7999/deploy" \
-     DCHOOK_SECRET_FILE="/tmp/bad_secret.txt" \
-     ./dchook-notify payload.json 2>&1 || echo "\n✓ Banned as expected"
-    rm /tmp/bad_secret.txt
-    echo "\nNote: Ban lasts 1 hour. Restart to clear: just restart"
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✗ First request should have failed"
+      exit 1
+    else
+      status=$?
+      if ((status == 41)); then
+        echo "✓ First request unauthorized (exit code ${status})"
+      else
+        echo "✗ First request unexpected exit code ${status} (expected 41)"
+        exit 1
+      fi
+    fi
+
+    echo "Sending second failed webhook (triggers ban)..."
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✗ Second request should have failed"
+      exit 1
+    else
+      status=$?
+      if ((status == 41)); then
+        echo "✓ Second request unauthorized (exit code ${status})"
+      else
+        echo "✗ Second request unexpected exit code ${status} (expected 41)"
+        exit 1
+      fi
+    fi
+
+    echo "Sending third request (should be banned)..."
+    if {{ dchook_notify }} -q payload.json; then
+      echo "✗ Third request should have been banned"
+      exit 1
+    else
+      status=$?
+      if ((status == 43)); then
+        echo "✓ Third request forbidden/banned (exit code ${status})"
+      else
+        echo "✗ Third request unexpected exit code ${status} (expected 43)"
+        exit ${status}
+      fi
+    fi
+
+    echo "✓ Ban test passed (ban lasts 1 hour, restart to clear: just restart)"
 
 # Check service health
 @health:
     echo "Checking dchook health..."
-    curl -s http://localhost:7999/health
-    echo "\nChecking dchook version..."
-    curl -s http://localhost:7999/version
+    curl -s {{ HEALTH_URL }}
     echo "\nChecking web service..."
     curl -s http://localhost:8081 | head -n 5
 
 # Clean up everything
 @clean: down
-    echo "Cleaning up..."
-    rm -f dchook-notify
-    echo "Done"
+    rm -f {{ dchook_notify }} {{ webhook_secret }} {{ client_secret }}
+    echo "Cleaned"
+
+@_build:
+    cd {{ justfile_dir() / ".." }} && go build -o {{ dchook_notify }} ./cmd/dchook-notify 2>&1 || { echo "Build failed"; exit 1; }
+
+@_build_image:
+    cd {{ justfile_dir() }} && docker build -t example-dchook:latest -f Dockerfile .. >/dev/null 2>&1 || { echo "Image build failed"; exit 1; }
