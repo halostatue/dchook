@@ -1,0 +1,66 @@
+name: Integration Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            auth.docker.io:443
+            deb.debian.org:80
+            deb.debian.org:443
+            download.docker.com:443
+            github.com:443
+            production.cloudflare.docker.com:443
+            proxy.golang.org:443
+            registry-1.docker.io:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+            vuln.go.dev:443
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+
+      - name: Prepare integration environment
+        run: |
+          just example/generate
+          sudo chown 65532:65532 example/webhook_secret.txt
+          echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >>$GITHUB_ENV
+
+      - name: Test successful webhook
+        run: just example/up success down
+
+      - name: Test failed webhook
+        run: just example/up failed down
+
+      - name: Test rate limiting
+        run: just example/up rate-limited down
+
+      - name: Test IP banning
+        run: just example/up banned down

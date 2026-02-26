@@ -24,14 +24,16 @@ jobs:
           disable-sudo: true
           egress-policy: block
           allowed-endpoints: >
-            golang.org:443
-            release-assets.githubusercontent.com:443
             api.github.com:443
             coveralls.io:443
             github.com:443
+            golang.org:443
             objects.githubusercontent.com:443
             proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
             sum.golang.org:443
+            vuln.go.dev:443
 
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
