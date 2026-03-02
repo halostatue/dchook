@@ -6,7 +6,7 @@ app_compose := justfile_dir() / "app/docker-compose.yml"
 dchook_compose := justfile_dir() / "docker-compose.yml"
 dchook_notify := justfile_dir() / "dchook-notify"
 export HEALTH_URL := "http://localhost:7999/health"
-export DCHOOK_URL := "http://localhost:7999/deploy"
+export DCHOOK_URL := "http://localhost:7999"
 
 # Default recipe - show available commands
 @_default:
@@ -91,14 +91,85 @@ success:
 
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
-    if {{ dchook_notify }} -q payload.json; then
-      echo "✓ Successful dchook trigger"
+    # Test backwards compatibility - no subcommand defaults to deploy
+    if output=$({{ dchook_notify }} -j payload.json); then
+      deployment_id=$(echo "$output" | jq -r '.deployment_id')
+      echo "✓ Successful dchook trigger (deployment: ${deployment_id})"
     else
       echo "𐄂 Error sending dchook trigger (exit code $?)"
       exit 1
     fi
 
     just logs
+    just status "${deployment_id}"
+
+# Test deployment status query
+status deployment_id:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE={{ client_secret }}
+
+    echo "Querying deployment status: {{ deployment_id }}"
+    if {{ dchook_notify }} status {{ deployment_id }}; then
+      echo "✓ Status query successful"
+    else
+      status=$?
+      echo "𐄂 Status query failed (exit code ${status})"
+      exit ${status}
+    fi
+
+# Test deployment list query
+list:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE={{ client_secret }}
+
+    echo "Querying deployment list..."
+    if {{ dchook_notify }} list | jq .; then
+      echo "✓ List query successful"
+    else
+      status=$?
+      echo "𐄂 List query failed (exit code ${status})"
+      exit ${status}
+    fi
+
+# Test multiple deployments and list (requires 5s rate limit)
+multi-deploy:
+    #!/usr/bin/env bash
+
+    set -eo pipefail
+
+    cd {{ justfile_dir() }}
+
+    export DCHOOK_SECRET_FILE={{ client_secret }}
+
+    echo "Triggering multiple deployments..."
+    for i in {1..3}; do
+      if output=$({{ dchook_notify }} -j payload.json); then
+        deployment_id=$(echo "$output" | jq -r '.deployment_id')
+        echo "✓ Deployment ${i}: ${deployment_id}"
+      else
+        echo "𐄂 Deployment ${i} failed"
+        exit 1
+      fi
+      sleep 6  # Wait for rate limit window (5s + buffer)
+    done
+
+    echo "Querying deployment list..."
+    if {{ dchook_notify }} list; then
+      echo "✓ List shows multiple deployments"
+    else
+      echo "𐄂 List query failed"
+      exit 1
+    fi
 
 # Test rate limiting (send 2 requests quickly)
 rate-limited:
@@ -110,15 +181,16 @@ rate-limited:
 
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
-    if {{ dchook_notify }} -q payload.json; then
-      echo "✓ Successful dchook trigger"
+    if output=$({{ dchook_notify }} -j deploy payload.json); then
+      deployment_id=$(echo "$output" | jq -r '.deployment_id')
+      echo "✓ Successful dchook trigger (deployment: ${deployment_id})"
     else
       status=$?
       echo "𐄂 Error sending dchook trigger (exit code ${status})"
       exit ${status}
     fi
 
-    if {{ dchook_notify }} -q payload.json; then
+    if {{ dchook_notify }} -q deploy payload.json; then
       echo "𐄂 dchook trigger was not rate limited"
       exit 1
     else
@@ -147,6 +219,7 @@ failed:
     echo "wrong-secret" >"${DCHOOK_SECRET_FILE}"
     chmod 600 "${DCHOOK_SECRET_FILE}"
 
+    # Test backwards compatibility - no subcommand defaults to deploy
     if {{ dchook_notify }} -q payload.json; then
       echo "✗ dchook trigger did not fail with bad secret"
       exit 1
@@ -177,7 +250,7 @@ banned:
     chmod 600 "${DCHOOK_SECRET_FILE}"
 
     echo "Sending first failed webhook..."
-    if {{ dchook_notify }} -q payload.json; then
+    if {{ dchook_notify }} -q deploy payload.json; then
       echo "✗ First request should have failed"
       exit 1
     else
@@ -191,7 +264,7 @@ banned:
     fi
 
     echo "Sending second failed webhook (triggers ban)..."
-    if {{ dchook_notify }} -q payload.json; then
+    if {{ dchook_notify }} -q deploy payload.json; then
       echo "✗ Second request should have failed"
       exit 1
     else
@@ -205,7 +278,7 @@ banned:
     fi
 
     echo "Sending third request (should be banned)..."
-    if {{ dchook_notify }} -q payload.json; then
+    if {{ dchook_notify }} -q deploy payload.json; then
       echo "✗ Third request should have been banned"
       exit 1
     else
@@ -236,4 +309,4 @@ banned:
     cd {{ justfile_dir() / ".." }} && go build -o {{ dchook_notify }} ./cmd/dchook-notify 2>&1 || { echo "Build failed"; exit 1; }
 
 @_build_image:
-    cd {{ justfile_dir() }} && docker build -t example-dchook:latest -f Dockerfile .. >/dev/null 2>&1 || { echo "Image build failed"; exit 1; }
+    cd {{ justfile_dir() }} && docker build --build-arg RATE_LIMIT_WINDOW=5s -t example-dchook:latest -f Dockerfile .. >/dev/null 2>&1 || { echo "Image build failed"; exit 1; }

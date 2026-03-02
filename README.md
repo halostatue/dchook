@@ -24,10 +24,11 @@ with hard-coded defaults to reduce the potential attack surface.
 
 - Constant-time HMAC signature verification algorithms (SHA-256, SHA-384,
   SHA-512) may be restricted
-- Replay attacks are mitigated via microsecond timestamps (valid for ±5 minutes)
-  and tracked for ten minutes
-- Failed attempts apply fail2ban behaviour: two failures results in a one-hour
-  rejection of any requests from the originating IP (v4 or normalized v6)
+- Replay attacks are mitigated via microsecond timestamps (valid for -5…+1
+  minutes) and tracked for ten minutes
+- Failed attempts apply strict banning behaviour: two failures results in a
+  one-hour rejection of any requests from the originating IP (v4 or normalized
+  v6)
 - Client IP extraction respects `X-Forwarded-For` from trusted proxies (loopback
   and private network ranges), falling back to `RemoteAddr` for direct
   connections
@@ -36,34 +37,58 @@ with hard-coded defaults to reduce the potential attack surface.
 - Secret files must be FIFOs (bash process substitution `<(echo 1)`) or regular
   files with 0600/0400 permissions
 - Compose files must exist on startup
-- Docker socket access is verified on startup (via `docker version`)
-- `dchook` and `dchook-notify` must match on major.minor versions, and if both
-  versions match exactly, the git commit must match exactly
+- Docker socket access is verified on startup (via `docker version` and
+  `docker compose versison`) but reported on access
+- Version compatibility is enforced (see
+  [Versioning Policy](#versioning-policy))
 
 It has a health-check endpoint, is designed to be run as a non-root user, and
 Docker compose updates are performed asynchronously after responding to the
-webhook.
+webhook. Deployment tracking maintains a history of the last 10 deployments with
+their results, accessible via authenticated status endpoints.
+
+## Versioning Policy
+
+`dchook` uses semantic versioning with strict compatibility requirements between
+the listener and CLI tool. This is because feature compatibility is not
+guaranteed to be backwards compatible and neither the server nor client will
+guarantee such compatibility.
+
+- The **major** and **minor** versions must match exactly. Client version
+  `1.2.x` can only communicate with server version `1.2.y` (not `1.3.z`).
+- **Patch** versions are both forward and backwards compatible. Within the same
+  major.minor, any patch version works (e.g., client `1.2.3` works with server
+  `1.2.5`).
+- Exact version matches also require commit match. If versions are identical
+  (e.g., both `1.2.3`), git commits must also match.
+
+This is a result of a strict modified semantic versioning policy is in place:
+
+- The **major** version increments when core protocol or security changes are
+  required (HMAC algorithm change, signature format change, etc.).
+- The **minor** version increments when there are new features.
+- The **patch** version increments with bug fixes.
 
 ## Installation
 
 Releases of `dchook` are signed with cosign and have GitHub SLSA attestations
 during the build process for binaries on [releases][releases].
 
-### Listener (dchook)
+### Listener (`dchook`)
 
-- Download from [releases][releases] (recommended)
-- Build from source `go install github.com/halostatue/dchook/cmd/dchook@v1.0.1`
+- Download from [releases][releases]
 - Use the `dchook-listener` container image:
-  `docker pull ghcr.io/halostatue/dchook/dchook-listener:1.0.1`
+  `docker pull ghcr.io/halostatue/dchook/dchook-listener:1.2.0`
 
   The container image uses the signed, attested binaries from
   [releases][releases] and is itself signed and attested.
+- Build from source `go install github.com/halostatue/dchook/cmd/dchook@v1.2.0`
 
-### CLI Tool (dchook-notify)
+### CLI Tool (`dchook-notify`)
 
 - Download from [releases][releases]
 - Build from source
-  `go install github.com/halostatue/dchook/cmd/dchook-notify@v1.0.1`
+  `go install github.com/halostatue/dchook/cmd/dchook-notify@v1.2.0`
 
 ## Configuration
 
@@ -72,14 +97,32 @@ during the build process for binaries on [releases][releases].
 `dchook` is configured via environment variables or command-line flags. Flags
 take precedence.
 
-| Variable                    | Flag                        | Required / Default     | Purpose                                         |
-| --------------------------- | --------------------------- | ---------------------- | ----------------------------------------------- |
-| `DCHOOK_SECRET_FILE`        | `-s`                        | ✅                     | Path to file containing webhook secret          |
-| `DCHOOK_COMPOSE_FILE`       | `-c`                        | ✅                     | Path to `docker-compose.yml` to manage          |
-| `DCHOOK_BIND_ADDRESS`       | `-b`                        | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces) |
-| `DCHOOK_PORT`               | `-p`                        | 7999                   | HTTP port to listen on                          |
-| `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms`              | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |
-|                             | `--enable-version-endpoint` |                        | Enable `/version` endpoint                      |
+| Variable                    | Flag           | Required / Default     | Purpose                                         |
+| --------------------------- | -------------- | ---------------------- | ----------------------------------------------- |
+| `DCHOOK_SECRET_FILE`        | `-s`           | ✅                     | Path to file containing webhook secret          |
+| `DCHOOK_COMPOSE_FILE`       | `-c`           | ✅                     | Path to `docker-compose.yml` to manage          |
+| `DCHOOK_COMPOSE_PROJECT`    | `--project`    |                        | Docker Compose project name (optional)          |
+| `DCHOOK_BIND_ADDRESS`       | `-b`           | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces) |
+| `DCHOOK_PORT`               | `-p`           | 7999                   | HTTP port to listen on                          |
+| `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms` | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |
+
+**Security Requirements:**
+
+- **Secret file** (`DCHOOK_SECRET_FILE`):
+  - On Unix: Must be a regular file or named pipe
+  - Must not be a symlink
+  - Must be an absolute path
+  - On Unix: Must have 0600 or 0400 permissions
+  - Cannot be in `/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev`
+
+- **Compose file** (`DCHOOK_COMPOSE_FILE`):
+  - Must not be a symlink
+  - Must be an absolute path
+  - Must be a regular file
+
+- **Project name** (`DCHOOK_COMPOSE_PROJECT`):
+  - Must start with lowercase letter or digit
+  - Can only contain lowercase letters, digits, dashes, and underscores
 
 > [!WARNING]
 >
@@ -93,15 +136,39 @@ take precedence.
 `dchook-notify` is configured via environment variables or command-line flags.
 Flags take precedence.
 
-| Variable             | Flag | Required / Default | Purpose                                      |
-| -------------------- | ---- | ------------------ | -------------------------------------------- |
-| `DCHOOK_URL`         | `-u` | ✅                 | Webhook endpoint URL                         |
-| `DCHOOK_SECRET_FILE` | `-s` | ✅                 | Path to file containing webhook secret       |
-| `DCHOOK_ALGORITHM`   | `-a` | `sha256`           | Hash algorithm: `sha256`, `sha384`, `sha512` |
+| Variable             | Flag | Required / Default | Purpose                                         |
+| -------------------- | ---- | ------------------ | ----------------------------------------------- |
+| `DCHOOK_URL`         | `-u` | ✅                 | Listener base URL (e.g., `https://example.com`) |
+| `DCHOOK_SECRET_FILE` | `-s` | ✅                 | Path to file containing webhook secret          |
+| `DCHOOK_ALGORITHM`   | `-a` | `sha256`           | Hash algorithm: `sha256`, `sha384`, `sha512`    |
+
+**Security Requirements:**
+
+- **Secret file** (`DCHOOK_SECRET_FILE`):
+  - Must not be a symlink
+  - On Unix: Cannot be in `/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or
+    `/dev`
+
+> [!NOTE]
+> `DCHOOK_URL` should be the base URL of the listener, not including `/deploy`.
+> For backwards compatibility, v1.2 will strip `/deploy` if present with a
+> warning. This will become an error in v1.3+.
+
+**Subcommands:**
+
+- `deploy` (default): Trigger a deployment
+- `status <deployment_id>`: Query status of a specific deployment
+- `list`: List recent deployments
+
+**Flags:**
+
+- `-q`: Quiet mode (suppress output, exit code only)
+- `-j`: JSON output mode (machine-readable, outputs `deployment_id` for
+  `deploy`)
 
 ## Usage
 
-### As a `systemd` Service (Recommended)
+### As a `systemd` Service
 
 After downloading the binary from [releases][releases], set up as a `systemd`
 service:
@@ -152,7 +219,7 @@ For containerized environments:
 ```yaml
 services:
   webhook:
-    image: ghcr.io/halostatue/dchook/dchook-listener:1.0.1
+    image: ghcr.io/halostatue/dchook/dchook-listener:1.2.0
     ports:
       - "7999:7999"
     volumes:
@@ -165,7 +232,7 @@ services:
       - DCHOOK_COMPOSE_FILE=/compose/app/docker-compose.yml
       - DCHOOK_BIND_ADDRESS=0.0.0.0
       - DCHOOK_PORT=7999
-    # Grant docker socket access - replace 999 with your docker group ID
+    # Grant docker socket access: replace 999 with your docker group ID
     # Find with: getent group docker | cut -d: -f3
     user: "65534:999"
 
@@ -193,8 +260,18 @@ standard input, or process substitution (FIFOs). If the payload is larger than
 export DCHOOK_URL="https://webhook.yourdomain.com/deploy"
 export DCHOOK_SECRET_FILE="/path/to/webhook_secret.txt"
 
+# Trigger deployment (default subcommand)
 echo '{"image":"ghcr.io/user/app:1.23.4"}' | dchook-notify -
 dchook-notify payload.json
+
+# Trigger deployment with JSON output (for scripting)
+deployment_id=$(dchook-notify -j payload.json | jq -r '.deployment_id')
+
+# Query deployment status
+dchook-notify status abc123def456
+
+# List recent deployments
+dchook-notify list
 
 # Using flags
 dchook-notify -u https://webhook.yourdomain.com/deploy -s /path/to/secret payload.json
@@ -208,6 +285,9 @@ dchook-notify <(echo '{"dynamic":"payload"}')
 
 # With different algorithm
 dchook-notify -a sha512 payload.json
+
+# Quiet mode (exit code only)
+dchook-notify -q payload.json && echo "Success" || echo "Failed"
 ```
 
 **Payload Requirements:**
@@ -255,7 +335,7 @@ jobs:
 
       - name: Install dchook-notify
         run: |
-          gh release download v1.0.1 \
+          gh release download v1.2.0 \
             --repo halostatue/dchook \
             --pattern 'dchook-notify_Linux_x86_64.tar.gz'
           gh attestation verify dchook-notify_Linux_x86_64.tar.gz \
@@ -280,15 +360,14 @@ jobs:
 
 **Required GitHub Secrets:**
 
-- `DCHOOK_URL` - Your webhook endpoint (e.g.,
-  `https://webhook.yourdomain.com/deploy`)
-- `DCHOOK_SECRET` - The webhook secret content
+- `DCHOOK_URL`: Your listener base URL (e.g., `https://webhook.yourdomain.com`)
+- `DCHOOK_SECRET`: The webhook secret content
 
 #### Manual cURL (without CLI)
 
 ```bash
-# The webhook expects an envelope with version info and timestamp
-# It's recommended to use dchook-notify instead of manual curl
+# The webhook expects an envelope with version info and timestamp.
+# It's strongly recommended to use dchook-notify instead of manual curl
 
 SECRET=$(cat /path/to/webhook_secret.txt)
 PAYLOAD='{"image":"ghcr.io/user/app:latest"}'
@@ -297,7 +376,7 @@ PAYLOAD='{"image":"ghcr.io/user/app:latest"}'
 # Structure: {dchook: {version, commit, timestamp}, payload: <your-data>}
 # timestamp must be a string (Unix microseconds) to avoid JSON precision loss
 TIMESTAMP=$(date +%s%6N)
-BODY=$(echo "$PAYLOAD" | jq -c --arg ts "$TIMESTAMP" '{dchook: {version: "v1.0.1", commit: "manual", timestamp: $ts}, payload: .}')
+BODY=$(echo "$PAYLOAD" | jq -c --arg ts "$TIMESTAMP" '{dchook: {version: "v1.2.0", commit: "manual", timestamp: $ts}, payload: .}')
 
 # Generate signature
 SIGNATURE="sha256:$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)"
@@ -314,7 +393,7 @@ curl -X POST https://webhook.yourdomain.com/deploy \
 ```json
 {
   "dchook": {
-    "version": "v1.0.1",
+    "version": "v1.2.0",
     "commit": "abc123",
     "timestamp": "1739923200000000"
   },
@@ -325,16 +404,87 @@ curl -X POST https://webhook.yourdomain.com/deploy \
 }
 ```
 
-- `dchook.version` - Client version (must match server major.minor)
-- `dchook.commit` - Client commit (must match if versions are identical)
-- `dchook.timestamp` - Unix microseconds as string (valid for ±5 minutes)
-- `payload` - Your application data (any valid JSON)
+- `dchook.version`: Client version (must match server major.minor)
+- `dchook.commit`: Client commit (must match if versions are identical)
+- `dchook.timestamp`: Unix microseconds as string (valid for -5…+1 minutes)
+- `payload`: Your application data (any valid JSON value or printable Unicode)
+  up to 1MiB in size
 
 ## Endpoints
 
-- `POST /deploy` - Trigger deployment (requires valid signature)
-- `GET /health` - Health check (returns 200 OK)
-- `GET /version` - Version information (only if enabled)
+### Webhook Endpoints
+
+- `POST /deploy`: Trigger deployment (requires valid signature)
+  - Returns `202 Accepted` with deployment ID
+  - Accepts `Accept: application/json` header for JSON response
+  - Without header, returns plain text (backwards compatible)
+
+The JSON response will become the default response in v1.3.
+
+### Status Endpoints
+
+- `GET /deploy/status/{id}`: Get deployment status by ID
+  - Requires HMAC authentication via headers
+  - Returns deployment details including:
+    - `status`: Current state (`"pending"`, `"pulling"`, `"restarting"`, `"complete"`, `"failed"`)
+    - `pull`: Pull operation results (exit code, output, duration)
+    - `restart`: Restart operation results (exit code, output, duration)
+    - `timestamp`: When deployment was triggered
+    - `request`: Original webhook payload
+- `GET /deploy/status`: List recent deployments
+  - Requires HMAC authentication via headers
+  - Returns last 10 deployments, sorted by timestamp (newest first)
+  - Each deployment includes the same fields as the single deployment endpoint
+
+### Health & Info
+
+- `GET /health`: Health check
+  - Returns `200 OK` if Docker is available
+  - Returns `503 Service Unavailable` if Docker is not accessible
+  - Includes deployment success/failure counts
+
+### Status Endpoint Authentication
+
+Status endpoints require HMAC authentication using request headers:
+
+- `X-Dchook-Timestamp`: Current Unix microseconds (as string)
+- `X-Dchook-Signature`: HMAC signature of the payload
+- `X-Dchook-Nonce`: Random nonce (for list requests only)
+
+**Signature payload:**
+
+- For `/deploy/status/{id}`: `timestamp:deploymentID`
+- For `/deploy/status`: `timestamp:nonce`
+
+**Example using dchook-notify:**
+
+```bash
+# Query specific deployment
+dchook-notify status abc123def456
+
+# List all recent deployments
+dchook-notify list
+```
+
+### Exit Codes
+
+`dchook-notify` returns meaningful exit codes for scripting:
+
+| Exit Code | HTTP Status | Meaning                          |
+| --------- | ----------- | -------------------------------- |
+| 0         | 202         | Success                          |
+| 1         | -           | Configuration error              |
+| 2         | -           | Payload error                    |
+| 3         | -           | Request error                    |
+| 40        | 400         | Bad request                      |
+| 41        | 401         | Unauthorized (invalid signature) |
+| 43        | 403         | Forbidden (banned IP)            |
+| 44        | 404         | Not found                        |
+| 13        | 413         | Payload too large                |
+| 29        | 429         | Rate limited                     |
+| 50        | 500         | Server error                     |
+| 53        | 503         | Service unavailable              |
+| 99        | -           | Unknown status                   |
 
 ## Development
 

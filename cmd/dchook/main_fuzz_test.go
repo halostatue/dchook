@@ -2,11 +2,12 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
+
+	"github.com/abczzz13/clientip"
 
 	"github.com/halostatue/dchook/internal/dchook"
 )
@@ -16,9 +17,30 @@ func FuzzDeployHandler(f *testing.F) {
 	secret := "test-secret"
 	allowedAlgos := map[string]bool{"sha256": true, "sha384": true, "sha512": true}
 	limiter := dchook.NewRateLimiter(10, time.Minute, 5, time.Hour, 10*time.Minute)
+	history := NewDeploymentHistory()
+	adapter := &MockAdapter{}
+	ipExtractor, err := clientip.New(clientip.PresetVMReverseProxy())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	cfg := &HandlerConfig{
+		dockerAvailable:   true,
+		ipExtractor:       ipExtractor,
+		secret:            secret,
+		allowedAlgorithms: allowedAlgos,
+		adapter:           adapter,
+		history:           history,
+		version:           "v1.0.0",
+		commit:            "abc",
+	}
+
+	handler := createDeployHandler(cfg, limiter)
 
 	// Seed with valid and invalid inputs
-	validPayload := []byte(`{"dchook":{"version":"v1.0.0","commit":"abc","timestamp":"1234567890000000"},"payload":{}}`)
+	validPayload := []byte(
+		`{"dchook":{"version":"v1.0.0","commit":"abc","timestamp":"1234567890000000"},"payload":{}}`,
+	)
 	validSig := dchook.GenerateSignature(validPayload, secret, "sha256")
 
 	f.Add(validPayload, validSig)
@@ -33,13 +55,12 @@ func FuzzDeployHandler(f *testing.F) {
 			return
 		}
 
-		req := httptest.NewRequest("POST", "/deploy", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/deploy", bytes.NewReader(body))
 		req.Header.Set("Dchook-Signature", signature)
 		req.RemoteAddr = "127.0.0.1:12345"
 		w := httptest.NewRecorder()
 
-		// Create a minimal handler that tests the core logic
-		// without actually running docker commands
+		// Call the actual handler - should not panic
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -47,26 +68,7 @@ func FuzzDeployHandler(f *testing.F) {
 				}
 			}()
 
-			// Test signature verification
-			_ = dchook.VerifySignature(body, signature, secret, allowedAlgos)
-
-			// Test JSON parsing
-			var envelope struct {
-				Dchook struct {
-					Version   string `json:"version"`
-					Commit    string `json:"commit"`
-					Timestamp string `json:"timestamp"`
-				} `json:"dchook"`
-				Payload interface{} `json:"payload"`
-			}
-			_ = json.Unmarshal(body, &envelope)
-
-			// Test replay check if timestamp is valid
-			if envelope.Dchook.Timestamp != "" {
-				if ts, err := strconv.ParseInt(envelope.Dchook.Timestamp, 10, 64); err == nil {
-					_ = limiter.CheckReplay(ts)
-				}
-			}
+			handler(w, req)
 		}()
 
 		// Verify response is valid HTTP

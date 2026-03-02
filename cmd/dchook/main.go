@@ -2,19 +2,14 @@
 package main
 
 import (
-	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log"
-	"net"
+	"log/slog"
 	"net/http"
-	"net/netip"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,26 +18,53 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "unknown"
-
-	secretFile        = flag.String("s", "", "Path to webhook secret file")
-	composeFile       = flag.String("c", "", "Path to docker-compose.yml")
-	bindAddress       = flag.String("b", "", "Bind address")
-	port              = flag.String("p", "", "HTTP port to listen on")
-	algorithms        = flag.String("algorithms", "sha256,sha384,sha512", "Comma-separated list of allowed HMAC algorithms")
-	enableVersionInfo = flag.Bool("enable-version-endpoint", false, "Enable /version endpoint")
-	showVersion       = flag.Bool("version", false, "Show version information")
-	showHelp          = flag.Bool("help", false, "Show help message")
+	errComposeSymlink      = errors.New("compose file must not be a symlink")
+	errComposeNotAbsolute  = errors.New("compose file must be an absolute path")
+	errComposeNotRegular   = errors.New("compose file must be a regular file")
+	errProjectInvalidStart = errors.New("project name must start with lowercase letter or digit")
+	errProjectInvalidChar  = errors.New("project name contains invalid character")
 )
 
 const (
-	// Limit request body size (1MB + 256 bytes for envelope overhead)
-	maxBodySize = dchook.MaxRequestBodySize
+	httpReadTimeout  = 10 * time.Second
+	httpWriteTimeout = 10 * time.Second
+	httpIdleTimeout  = 60 * time.Second
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+
+	// Build-time configurable rate limit for testing, override with
+	// `-ldflags="-X main.rateLimitWindow=5s"`.
+	rateLimitWindow = "60s"
+
+	secretFile     = flag.String("s", "", "Path to webhook secret file")
+	composeFile    = flag.String("c", "", "Path to docker-compose.yml")
+	composeProject = flag.String("project", "", "Docker Compose project name")
+	bindAddress    = flag.String("b", "", "Bind address")
+	port           = flag.String("p", "", "HTTP port to listen on")
+	algorithms     = flag.String(
+		"algorithms",
+		"sha256,sha384,sha512",
+		"Comma-separated list of allowed HMAC algorithms",
+	)
+	showVersion = flag.Bool("version", false, "Show version information")
+	showHelp    = flag.Bool("help", false, "Show help message")
+)
+
+const (
+	deployMaxFailures    = 2
+	deployBanDuration    = time.Hour
+	statusRateWindow     = 3 * time.Second
+	statusMaxRequests    = 15
+	statusRateWindow2    = time.Minute
+	replayTrackingWindow = 10 * time.Minute
 )
 
 func printUsage(w io.Writer) {
 	progName := filepath.Base(os.Args[0])
+	//nolint:errcheck,gosec // Writing to stderr/stdout
 	fmt.Fprintf(w, `Usage: %s [OPTIONS]
 
 Secure webhook receiver for Docker Compose deployments.
@@ -51,56 +73,29 @@ Options:
 `, progName)
 	flag.CommandLine.SetOutput(w)
 	flag.PrintDefaults()
+	//nolint:errcheck,gosec // Writing to stderr/stdout
 	fmt.Fprintf(w, `
 Environment Variables:
   DCHOOK_SECRET_FILE         *    Path to webhook secret file
   DCHOOK_COMPOSE_FILE        *    Path to docker-compose.yml to manage
+  DCHOOK_COMPOSE_PROJECT          Docker Compose project name
   DCHOOK_BIND_ADDRESS             Bind address (default: 127.0.0.1)
   DCHOOK_PORT                     HTTP port to listen on (default: 7999)
   DCHOOK_ALLOWED_ALGORITHMS       Comma-separated list of allowed HMAC
                                   algorithms (default: sha256,sha384,sha512)
 
-Endpoints:
-  POST /deploy    Trigger deployment (requires valid signature)
-  GET  /health    Health check (returns 200 OK)
-  GET  /version   Version information (only if enabled)
+Variables marked with * are required.
 
 Examples:
   # Using environment variables
   export DCHOOK_SECRET_FILE=/etc/dchook/secret
   export DCHOOK_COMPOSE_FILE=/opt/app/docker-compose.yml
+  export DCHOOK_COMPOSE_PROJECT=myapp
   %s
 
   # Using flags
-  %s -s /etc/dchook/secret -c /opt/app/docker-compose.yml -p 8080
-
-  # Enable version endpoint
-  %s -s /etc/dchook/secret -c /opt/app/docker-compose.yml \
-  	--enable-version-endpoint
-`, progName, progName, progName)
-}
-
-func deploy(composeFile string) error {
-	log.Println("Starting deployment...")
-
-	// Pull latest images
-	pullCmd := exec.Command("docker", "compose", "-f", composeFile, "pull")
-	pullCmd.Stdout = os.Stdout
-	pullCmd.Stderr = os.Stderr
-	if err := pullCmd.Run(); err != nil {
-		return fmt.Errorf("pull failed: %w", err)
-	}
-
-	// Restart services
-	upCmd := exec.Command("docker", "compose", "-f", composeFile, "up", "-d", "--remove-orphans")
-	upCmd.Stdout = os.Stdout
-	upCmd.Stderr = os.Stderr
-	if err := upCmd.Run(); err != nil {
-		return fmt.Errorf("up failed: %w", err)
-	}
-
-	log.Println("Deployment complete")
-	return nil
+  %s -s /etc/dchook/secret -c /opt/app/docker-compose.yml --project myapp -p 8080
+`, progName, progName)
 }
 
 func main() {
@@ -119,33 +114,19 @@ func main() {
 		os.Exit(0)
 	}
 
-	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "-s")
+	// Initialize structured logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
+	slog.Info("starting dchook", "version", version, "commit", commit)
+
+	secret, err := readSecretFile()
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to read secret file", "error", err)
+		os.Exit(1)
 	}
-
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(secretFilePath)
-		if err != nil {
-			log.Fatalf("Failed to stat webhook secret file: %v", err)
-		}
-		mode := info.Mode()
-
-		if mode.IsRegular() {
-			perm := mode.Perm()
-			if perm != 0o600 && perm != 0o400 {
-				log.Fatalf("Secret file has insecure permissions: %o (expected 0600 or 0400)", perm)
-			}
-		} else if mode&os.ModeNamedPipe == 0 {
-			log.Fatalf("Secret file must be a regular file or named pipe, got: %s", mode)
-		}
-	}
-
-	secretBytes, err := os.ReadFile(secretFilePath)
-	if err != nil {
-		log.Fatalf("Failed to read webhook secret: %v", err)
-	}
-	secret := strings.TrimSpace(string(secretBytes))
 
 	allowedAlgos, err := dchook.FlagValue(*algorithms, "DCHOOK_ALLOWED_ALGORITHMS", "-a")
 	if err != nil {
@@ -153,26 +134,50 @@ func main() {
 	}
 
 	allowedAlgorithms := make(map[string]bool)
-	for _, algo := range strings.Split(allowedAlgos, ",") {
+	for algo := range strings.SplitSeq(allowedAlgos, ",") {
 		algo = strings.TrimSpace(algo)
 		if algo == "sha256" || algo == "sha384" || algo == "sha512" {
 			allowedAlgorithms[algo] = true
 		} else {
-			log.Fatalf("Invalid algorithm: %s (must be sha256, sha384, or sha512)", algo)
+			slog.Error("invalid algorithm", "algorithm", algo)
+			os.Exit(1)
 		}
 	}
 
 	composeFilePath, err := dchook.FlagValue(*composeFile, "DCHOOK_COMPOSE_FILE", "-c")
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("missing compose file", "error", err)
+		os.Exit(1)
 	}
 
-	if _, err := os.Stat(composeFilePath); err != nil {
-		log.Fatalf("Compose file not found: %s", composeFilePath)
+	composeFilePath, err = validateComposeFile(composeFilePath)
+	if err != nil {
+		slog.Error("invalid compose file", "error", err)
+		os.Exit(1)
 	}
 
-	if err := exec.Command("docker", "version").Run(); err != nil {
-		log.Fatalf("Cannot access docker: %v (ensure docker is running and user has access)", err)
+	//nolint:errcheck // Optional
+	projectName, _ := dchook.FlagValue(
+		*composeProject,
+		"DCHOOK_COMPOSE_PROJECT",
+		"--project",
+	)
+
+	if projectName != "" {
+		if err := validateProjectName(projectName); err != nil {
+			slog.Error("invalid project name", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	controller := &DockerComposeAdapter{
+		ComposeFile: composeFilePath,
+		ProjectName: projectName,
+	}
+	dockerAvailable := true
+	if err := controller.Available(); err != nil {
+		slog.Warn("docker unavailable, deployments will fail with 503", "error", err)
+		dockerAvailable = false
 	}
 
 	listenAddr, err := dchook.FlagValue(*bindAddress, "DCHOOK_BIND_ADDRESS", "-b")
@@ -186,150 +191,135 @@ func main() {
 		listenPort = "7999"
 	}
 
-	versionEnabled := *enableVersionInfo
+	history := NewDeploymentHistory()
 
-	var versionJSON []byte
-	if versionEnabled {
-		algos := make([]string, 0, len(allowedAlgorithms))
-		for algo := range allowedAlgorithms {
-			algos = append(algos, algo)
-		}
-		versionJSON, _ = json.Marshal(map[string]interface{}{
-			"version":              version,
-			"commit":               commit,
-			"supported_algorithms": algos,
-		})
-	}
-
-	// Initialize IP extractor for rate limiting
 	ipExtractor, err := clientip.New(clientip.PresetVMReverseProxy())
 	if err != nil {
-		log.Fatalf("Failed to create IP extractor: %v", err)
+		slog.Error("failed to create IP extractor", "error", err)
+		os.Exit(1)
 	}
 
-	limiter := dchook.NewRateLimiter(1, time.Minute, 2, time.Hour, 10*time.Minute)
-
-	http.HandleFunc("/deploy", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-		// Extract real client IP (handles X-Forwarded-For from trusted proxies)
-		clientIP, err := ipExtractor.ExtractAddr(r)
-		if err != nil {
-			log.Printf("Failed to extract client IP: %v, using RemoteAddr", err)
-			// Fallback to RemoteAddr
-			ip, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				ip = r.RemoteAddr
-			}
-			clientIP = netip.MustParseAddr(ip)
-		}
-		ip := clientIP.String()
-
-		if limiter.IsBanned(ip) {
-			log.Printf("Banned IP attempted access: %s", ip)
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-
-		// Read payload
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("Failed to read body: %v", err)
-			limiter.RecordFailure(ip)
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-
-		// Verify signature
-		signature := r.Header.Get("Dchook-Signature")
-		if !dchook.VerifySignature(body, signature, secret, allowedAlgorithms) {
-			log.Printf("Invalid signature from %s", ip)
-			limiter.RecordFailure(ip)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Parse envelope
-		var envelope struct {
-			Dchook struct {
-				Version   string `json:"version"`
-				Commit    string `json:"commit"`
-				Timestamp string `json:"timestamp"`
-			} `json:"dchook"`
-			Payload interface{} `json:"payload"`
-		}
-		if err := json.Unmarshal(body, &envelope); err != nil {
-			log.Printf("Invalid JSON from %s: %v", ip, err)
-			limiter.RecordFailure(ip)
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-
-		// Parse timestamp
-		timestamp, err := strconv.ParseInt(envelope.Dchook.Timestamp, 10, 64)
-		if err != nil {
-			log.Printf("Invalid timestamp from %s: %v", ip, err)
-			limiter.RecordFailure(ip)
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-
-		// Check for replay attack
-		if !limiter.CheckReplay(timestamp) {
-			log.Printf("Replay attack detected from %s (timestamp: %s)", ip, envelope.Dchook.Timestamp)
-			limiter.RecordFailure(ip)
-			http.Error(w, "Invalid or replayed timestamp", http.StatusBadRequest)
-			return
-		}
-
-		// Validate version compatibility (major.minor must match, exact version requires matching commit)
-		if !dchook.IsVersionCompatible(envelope.Dchook.Version, version, envelope.Dchook.Commit, commit) {
-			log.Printf("Version/commit mismatch: client=%s/%s server=%s/%s", envelope.Dchook.Version, envelope.Dchook.Commit, version, commit)
-			limiter.RecordFailure(ip)
-			http.Error(w, fmt.Sprintf("Version mismatch: server=%s/%s client=%s/%s", version, commit, envelope.Dchook.Version, envelope.Dchook.Commit), http.StatusBadRequest)
-			return
-		}
-
-		// Check success rate limit
-		if !limiter.RecordSuccess(ip) {
-			log.Printf("Success rate limit exceeded for %s", ip)
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-
-		log.Printf("Deployment triggered by client v%s (commit: %s)", envelope.Dchook.Version, envelope.Dchook.Commit)
-
-		// Deploy asynchronously
-		go func() {
-			if err := deploy(composeFilePath); err != nil {
-				log.Printf("Deployment failed: %v", err)
-			}
-		}()
-
-		w.WriteHeader(dchook.DeployAcceptedStatus)
-		fmt.Fprintf(w, "Deployment triggered\n")
-	})
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK\n")
-	})
-
-	if versionEnabled {
-		http.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(versionJSON)
-		})
+	rateLimitDuration, err := time.ParseDuration(rateLimitWindow)
+	if err != nil {
+		slog.Error("invalid rate limit window", "window", rateLimitWindow, "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("dchook v%s (commit: %s) listening on %s:%s", version, commit, listenAddr, listenPort)
-	if err := http.ListenAndServe(listenAddr+":"+listenPort, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	deployLimiter := dchook.NewRateLimiter(
+		1,
+		rateLimitDuration,
+		deployMaxFailures,
+		deployBanDuration,
+		replayTrackingWindow,
+	)
+	statusLimiter := dchook.NewRateLimiter(
+		1,
+		statusRateWindow,
+		statusMaxRequests,
+		statusRateWindow2,
+		replayTrackingWindow,
+	)
+
+	// Create handler configuration
+	cfg := &HandlerConfig{
+		dockerAvailable:   dockerAvailable,
+		ipExtractor:       ipExtractor,
+		secret:            secret,
+		allowedAlgorithms: allowedAlgorithms,
+		adapter:           controller,
+		history:           history,
+		version:           version,
+		commit:            commit,
 	}
+
+	// Register handlers (most specific first)
+	http.HandleFunc("/deploy/status/", createStatusHandler(cfg, statusLimiter))
+	http.HandleFunc("/deploy", createDeployHandler(cfg, deployLimiter))
+	http.HandleFunc("/health", createHealthHandler(cfg))
+
+	slog.Info(
+		"server starting",
+		"version",
+		version,
+		"commit",
+		commit,
+		"address",
+		listenAddr,
+		"port",
+		listenPort,
+	)
+
+	server := &http.Server{
+		Addr:         listenAddr + ":" + listenPort,
+		ReadTimeout:  httpReadTimeout,
+		WriteTimeout: httpWriteTimeout,
+		IdleTimeout:  httpIdleTimeout,
+	}
+
+	if err := server.ListenAndServe(); err != nil {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func readSecretFile() (string, error) {
+	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "-s")
+	if err != nil {
+		return "", fmt.Errorf("secret file configuration: %w", err)
+	}
+
+	secret, err := dchook.ReadSecretFileStrict(secretFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read secret: %w", err)
+	}
+	return secret, nil
+}
+
+func validateComposeFile(path string) (string, error) {
+	// Check if the path is a symlink
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat compose file %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("%w: %q", errComposeSymlink, path)
+	}
+
+	// Resolve and validate path
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid compose file path %q: %w", path, err)
+	}
+
+	if !filepath.IsAbs(resolvedPath) {
+		return "", fmt.Errorf("%w: %q", errComposeNotAbsolute, path)
+	}
+
+	// Verify it's a regular file
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: %q", errComposeNotRegular, path)
+	}
+
+	return resolvedPath, nil
+}
+
+func validateProjectName(name string) error {
+	if name == "" {
+		return nil
+	}
+
+	// Must start with lowercase letter or digit
+	first := rune(name[0])
+	if (first < 'a' || first > 'z') && (first < '0' || first > '9') {
+		return fmt.Errorf("%w: %q", errProjectInvalidStart, name)
+	}
+
+	// Must contain only lowercase letters, digits, dashes, and underscores
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return fmt.Errorf("%w %q in %q", errProjectInvalidChar, r, name)
+		}
+	}
+
+	return nil
 }

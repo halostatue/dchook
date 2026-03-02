@@ -8,11 +8,12 @@ agents.
 ## Supported Versions
 
 Security reports are accepted for the most recent major release with support for
-the previous major version ending immediately.
+the previous major version ending immediately. Security reports are not accepted
+for `dev` versions.
 
-dchook supports the two most recent versions of Go.
+`dchook` supports the two most recent versions of Go.
 
-As of February 2026, the support list is:
+As of March 2026, the support list is:
 
 | Go Version |
 | ---------- |

@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// RateLimiter tracks request rates and bans for IP addresses
+// RateLimiter tracks request rates and bans for IP addresses.
 type RateLimiter struct {
-	mu              sync.Mutex
+	mutex           sync.Mutex
 	successRequests map[string][]time.Time
 	failedRequests  map[string]int
 	bannedUntil     map[string]time.Time
@@ -20,8 +20,13 @@ type RateLimiter struct {
 	replayWindow    time.Duration
 }
 
-// NewRateLimiter creates a new rate limiter with the specified limits
-func NewRateLimiter(successLimit int, successWindow time.Duration, failLimit int, banDuration time.Duration, replayWindow time.Duration) *RateLimiter {
+// NewRateLimiter creates a new rate limiter with the specified limits.
+func NewRateLimiter(
+	successLimit int,
+	successWindow time.Duration,
+	failLimit int,
+	banDuration, replayWindow time.Duration,
+) *RateLimiter {
 	return &RateLimiter{
 		successRequests: make(map[string][]time.Time),
 		failedRequests:  make(map[string]int),
@@ -35,26 +40,26 @@ func NewRateLimiter(successLimit int, successWindow time.Duration, failLimit int
 	}
 }
 
-// IsBanned checks if an IP is currently banned
-func (rl *RateLimiter) IsBanned(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+// IsBanned checks if an IP is currently banned.
+func (limiter *RateLimiter) IsBanned(ipAddress string) bool {
+	limiter.mutex.Lock()
+	defer limiter.mutex.Unlock()
 
-	if banTime, exists := rl.bannedUntil[ip]; exists {
+	if banTime, exists := limiter.bannedUntil[ipAddress]; exists {
 		if time.Now().Before(banTime) {
 			return true
 		}
 		// Ban expired, clean up
-		delete(rl.bannedUntil, ip)
-		delete(rl.failedRequests, ip)
+		delete(limiter.bannedUntil, ipAddress)
+		delete(limiter.failedRequests, ipAddress)
 	}
 	return false
 }
 
-// CheckReplay checks if a timestamp has been seen before or is invalid
-func (rl *RateLimiter) CheckReplay(timestamp int64) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+// CheckReplay checks if a timestamp has been seen before or is invalid.
+func (limiter *RateLimiter) CheckReplay(timestamp int64) bool {
+	limiter.mutex.Lock()
+	defer limiter.mutex.Unlock()
 
 	now := time.Now()
 	requestTime := time.UnixMicro(timestamp)
@@ -65,59 +70,64 @@ func (rl *RateLimiter) CheckReplay(timestamp int64) bool {
 	}
 
 	// Check if we've seen this timestamp
-	if _, seen := rl.seenTimestamps[timestamp]; seen {
+	if _, seen := limiter.seenTimestamps[timestamp]; seen {
 		return false
 	}
 
 	// Clean up old timestamps
-	cutoff := now.Add(-rl.replayWindow)
-	for ts, recordedAt := range rl.seenTimestamps {
+	cutoff := now.Add(-limiter.replayWindow)
+	for ts, recordedAt := range limiter.seenTimestamps {
 		if recordedAt.Before(cutoff) {
-			delete(rl.seenTimestamps, ts)
+			delete(limiter.seenTimestamps, ts)
 		}
 	}
 
 	// Record this timestamp
-	rl.seenTimestamps[timestamp] = now
+	limiter.seenTimestamps[timestamp] = now
 	return true
 }
 
-// RecordSuccess records a successful request and returns false if rate limit exceeded
-func (rl *RateLimiter) RecordSuccess(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+// RecordSuccess records a successful request and returns false if rate limit exceeded.
+func (limiter *RateLimiter) RecordSuccess(ipAddress string) bool {
+	limiter.mutex.Lock()
+	defer limiter.mutex.Unlock()
 
 	now := time.Now()
-	cutoff := now.Add(-rl.successWindow)
+	cutoff := now.Add(-limiter.successWindow)
 
 	// Clean old successful requests
 	var recent []time.Time
-	for _, t := range rl.successRequests[ip] {
+	for _, t := range limiter.successRequests[ipAddress] {
 		if t.After(cutoff) {
 			recent = append(recent, t)
 		}
 	}
 
-	if len(recent) >= rl.successLimit {
+	if len(recent) >= limiter.successLimit {
 		return false
 	}
 
 	recent = append(recent, now)
-	rl.successRequests[ip] = recent
+	limiter.successRequests[ipAddress] = recent
 
 	// Reset failed count on success
-	delete(rl.failedRequests, ip)
+	delete(limiter.failedRequests, ipAddress)
 	return true
 }
 
-// RecordFailure records a failed request and bans the IP if threshold exceeded
-func (rl *RateLimiter) RecordFailure(ip string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+// RecordFailure records a failed request and bans the IP if threshold exceeded.
+func (limiter *RateLimiter) RecordFailure(ipAddress string) {
+	limiter.mutex.Lock()
+	defer limiter.mutex.Unlock()
 
-	rl.failedRequests[ip]++
-	if rl.failedRequests[ip] >= rl.failLimit {
-		rl.bannedUntil[ip] = time.Now().Add(rl.banDuration)
-		log.Printf("IP %s banned for %v after %d failed attempts", ip, rl.banDuration, rl.failedRequests[ip])
+	limiter.failedRequests[ipAddress]++
+	if limiter.failedRequests[ipAddress] >= limiter.failLimit {
+		limiter.bannedUntil[ipAddress] = time.Now().Add(limiter.banDuration)
+		log.Printf(
+			"IP %s banned for %v after %d failed attempts",
+			ipAddress,
+			limiter.banDuration,
+			limiter.failedRequests[ipAddress],
+		)
 	}
 }

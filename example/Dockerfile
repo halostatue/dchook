@@ -13,9 +13,10 @@ COPY cmd/dchook ./cmd/dchook
 
 ARG VERSION=dev
 ARG COMMIT=unknown
+ARG RATE_LIMIT_WINDOW=60s
 
 RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.rateLimitWindow=${RATE_LIMIT_WINDOW}" \
     -o dchook \
     ./cmd/dchook
 
