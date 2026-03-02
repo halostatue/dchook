@@ -28,8 +28,9 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             auth.docker.io:443
-            deb.debian.org:80
             deb.debian.org:443
+            deb.debian.org:80
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
             download.docker.com:443
             github.com:443
             production.cloudflare.docker.com:443
@@ -51,10 +52,13 @@ jobs:
         run: |
           just example/generate
           sudo chown 65532:65532 example/webhook_secret.txt
-          echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >>$GITHUB_ENV
+          echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >>"${GITHUB_ENV}"
 
       - name: Test successful webhook
         run: just example/up success down
+
+      - name: Test multiple deployments
+        run: just example/up multi-deploy down
 
       - name: Test failed webhook
         run: just example/up failed down

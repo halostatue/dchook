@@ -7,6 +7,8 @@ import (
 )
 
 func TestIsVersionCompatible(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		clientVer    string
 		serverVer    string
@@ -30,7 +32,13 @@ func TestIsVersionCompatible(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.clientVer+"_"+tt.serverVer+"_"+tt.clientCommit[:3], func(t *testing.T) {
-			got := dchook.IsVersionCompatible(tt.clientVer, tt.serverVer, tt.clientCommit, tt.serverCommit)
+			t.Parallel()
+			got := dchook.IsVersionCompatible(
+				tt.clientVer,
+				tt.serverVer,
+				tt.clientCommit,
+				tt.serverCommit,
+			)
 			if got != tt.want {
 				t.Errorf("IsVersionCompatible(%q, %q, %q, %q) = %v, want %v",
 					tt.clientVer, tt.serverVer, tt.clientCommit, tt.serverCommit, got, tt.want)

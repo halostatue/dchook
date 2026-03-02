@@ -1,3 +1,5 @@
+// Package dchook provides core functionality for secure webhook handling,
+// including HMAC signature verification, rate limiting, and version compatibility checks.
 package dchook
 
 import (
@@ -5,67 +7,65 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 )
 
 const (
-	// DeployAcceptedStatus is the HTTP status code returned when a deployment is accepted
+	// DeployAcceptedStatus is the HTTP status code returned when a deployment is
+	// accepted.
 	DeployAcceptedStatus = http.StatusAccepted
 
-	// MaxPayloadSize is the maximum size for payload data (1MiB)
+	// MaxPayloadSize is the maximum size for payload data (1MiB).
 	MaxPayloadSize = 1 << 20
 
-	// MaxRequestBodySize is the maximum HTTP request body size (1MiB + 256 bytes for envelope overhead)
+	// MaxRequestBodySize is the maximum HTTP request body size (1MiB + 256 bytes for envelope overhead).
 	MaxRequestBodySize = MaxPayloadSize + 1<<8
+
+	// AlgorithmSHA256 is used for HMAC-SHA256.
+	AlgorithmSHA256 = "sha256"
+	// AlgorithmSHA384 is used for HMAC-SHA384.
+	AlgorithmSHA384 = "sha384"
+	// AlgorithmSHA512 is used for HMAC-SHA512.
+	AlgorithmSHA512 = "sha512"
+
+	// signatureParts is the expected number of parts in algorithm:hash format.
+	signatureParts = 2
 )
 
-// IsVersionCompatible checks if client and server versions are compatible
-func IsVersionCompatible(clientVer, serverVer, clientCommit, serverCommit string) bool {
-	// "dev" versions are always compatible
-	if clientVer == "dev" || serverVer == "dev" {
-		return true
+// ErrFlagRequired is returned when both flag and environment variable are empty.
+var ErrFlagRequired = errors.New("flag or environment variable required")
+
+// parseSignature splits a signature into algorithm and hash parts.
+// Returns empty strings if the signature format is invalid.
+func parseSignature(signature string) (string, string) {
+	parts := strings.SplitN(signature, ":", signatureParts)
+	if len(parts) < signatureParts {
+		return "", ""
 	}
-
-	// Parse versions (expecting vX.Y.Z or X.Y.Z)
-	clientParts := strings.TrimPrefix(clientVer, "v")
-	serverParts := strings.TrimPrefix(serverVer, "v")
-
-	clientSegs := strings.Split(clientParts, ".")
-	serverSegs := strings.Split(serverParts, ".")
-
-	if len(clientSegs) < 2 || len(serverSegs) < 2 {
-		return false
-	}
-
-	// Compare major.minor
-	clientMajor, err1 := strconv.Atoi(clientSegs[0])
-	clientMinor, err2 := strconv.Atoi(clientSegs[1])
-	serverMajor, err3 := strconv.Atoi(serverSegs[0])
-	serverMinor, err4 := strconv.Atoi(serverSegs[1])
-
-	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
-		return false
-	}
-
-	// Major.minor must match
-	if clientMajor != serverMajor || clientMinor != serverMinor {
-		return false
-	}
-
-	// If versions match exactly, commits must also match
-	if clientVer == serverVer && clientCommit != serverCommit {
-		return false
-	}
-
-	return true
+	return parts[0], parts[1]
 }
 
-// IsPrintableUTF8 checks if data is valid UTF-8 and contains only printable characters
+// IsVersionCompatible checks if client and server versions are compatible.
+func IsVersionCompatible(clientVer, serverVer, clientCommit, serverCommit string) bool {
+	client, err := ParseVersion(clientVer, clientCommit)
+	if err != nil {
+		return false
+	}
+
+	server, err := ParseVersion(serverVer, serverCommit)
+	if err != nil {
+		return false
+	}
+
+	return client.IsCompatible(server)
+}
+
+// IsPrintableUTF8 checks if data is valid UTF-8 and contains only printable characters.
 func IsPrintableUTF8(data []byte) bool {
 	s := string(data)
 	for _, r := range s {
@@ -87,19 +87,24 @@ func FlagValue(flagVal, envVar, flagName string) (string, error) {
 		return envVal, nil
 	}
 
-	return "", fmt.Errorf("%s environment variable or %s flag is required", envVar, flagName)
+	return "", fmt.Errorf(
+		"%w: %s environment variable or %s flag is required",
+		ErrFlagRequired,
+		envVar,
+		flagName,
+	)
 }
 
 // GenerateSignature creates an HMAC signature for the payload using the specified algorithm.
 // Returns the signature in the format "algorithm:hexhash".
-func GenerateSignature(payload []byte, secret string, algorithm string) string {
+func GenerateSignature(payload []byte, secret, algorithm string) string {
 	var mac hash.Hash
 	switch algorithm {
-	case "sha256":
+	case AlgorithmSHA256:
 		mac = hmac.New(sha256.New, []byte(secret))
-	case "sha384":
+	case AlgorithmSHA384:
 		mac = hmac.New(sha512.New384, []byte(secret))
-	case "sha512":
+	case AlgorithmSHA512:
 		mac = hmac.New(sha512.New, []byte(secret))
 	default:
 		return ""
@@ -113,14 +118,15 @@ func GenerateSignature(payload []byte, secret string, algorithm string) string {
 
 // VerifySignature checks if the signature matches the payload using constant-time comparison.
 // Only algorithms in allowedAlgorithms are accepted.
-func VerifySignature(payload []byte, signature string, secret string, allowedAlgorithms map[string]bool) bool {
-	parts := strings.SplitN(signature, ":", 2)
-	if len(parts) != 2 {
+func VerifySignature(
+	payload []byte,
+	signature, secret string,
+	allowedAlgorithms map[string]bool,
+) bool {
+	algorithm, expectedHash := parseSignature(signature)
+	if algorithm == "" {
 		return false
 	}
-
-	algorithm := parts[0]
-	expectedHash := parts[1]
 
 	// Check if algorithm is allowed
 	if !allowedAlgorithms[algorithm] {
@@ -134,11 +140,10 @@ func VerifySignature(payload []byte, signature string, secret string, allowedAlg
 	}
 
 	// Extract hash from generated signature
-	actualParts := strings.SplitN(actualSignature, ":", 2)
-	if len(actualParts) != 2 {
+	_, actualHash := parseSignature(actualSignature)
+	if actualHash == "" {
 		return false
 	}
-	actualHash := actualParts[1]
 
 	return hmac.Equal([]byte(expectedHash), []byte(actualHash))
 }

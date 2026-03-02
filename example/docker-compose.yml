@@ -12,6 +12,7 @@ services:
     environment:
       - DCHOOK_SECRET_FILE=/run/secrets/webhook_secret
       - DCHOOK_COMPOSE_FILE=/compose/app/docker-compose.yml
+      - DCHOOK_COMPOSE_PROJECT=compose
       - DCHOOK_BIND_ADDRESS=0.0.0.0
       - DCHOOK_PORT=7999
     user: "65532:${DOCKER_GID:-991}"

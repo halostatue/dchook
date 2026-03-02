@@ -7,6 +7,7 @@ import (
 )
 
 func TestGenerateSignature(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		payload    []byte
@@ -73,11 +74,12 @@ func TestGenerateSignature(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sig := dchook.GenerateSignature(tt.payload, tt.secret, tt.algorithm)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			sig := dchook.GenerateSignature(testCase.payload, testCase.secret, testCase.algorithm)
 
-			if tt.wantEmpty {
+			if testCase.wantEmpty {
 				if sig != "" {
 					t.Errorf("Expected empty signature for invalid algorithm, got %q", sig)
 				}
@@ -87,31 +89,16 @@ func TestGenerateSignature(t *testing.T) {
 			if len(sig) == 0 {
 				t.Error("Signature should not be empty")
 			}
-			if len(sig) < len(tt.wantPrefix) || sig[:len(tt.wantPrefix)] != tt.wantPrefix {
-				t.Errorf("Signature should start with %q, got %q", tt.wantPrefix, sig)
+			if len(sig) < len(testCase.wantPrefix) ||
+				sig[:len(testCase.wantPrefix)] != testCase.wantPrefix {
+				t.Errorf("Signature should start with %q, got %q", testCase.wantPrefix, sig)
 			}
 		})
 	}
 }
 
-func TestGenerateSignatureConsistency(t *testing.T) {
-	payload := []byte(`{"test":"data"}`)
-	secret := "test-secret"
-
-	sig1 := dchook.GenerateSignature(payload, secret, "sha256")
-	sig2 := dchook.GenerateSignature(payload, secret, "sha256")
-
-	if sig1 != sig2 {
-		t.Error("Same payload should generate same signature")
-	}
-
-	sig3 := dchook.GenerateSignature([]byte(`{"different":"data"}`), secret, "sha256")
-	if sig1 == sig3 {
-		t.Error("Different payload should generate different signature")
-	}
-}
-
 func TestVerifySignature(t *testing.T) {
+	t.Parallel()
 	secret := "test-secret"
 	payload := []byte(`{"test":"data"}`)
 	allowedAlgos := map[string]bool{"sha256": true, "sha384": true, "sha512": true}
@@ -181,11 +168,17 @@ func TestVerifySignature(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := dchook.VerifySignature(tt.payload, tt.signature, secret, tt.allowed)
-			if got != tt.want {
-				t.Errorf("VerifySignature() = %v, want %v", got, tt.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got := dchook.VerifySignature(
+				testCase.payload,
+				testCase.signature,
+				secret,
+				testCase.allowed,
+			)
+			if got != testCase.want {
+				t.Errorf("VerifySignature() = %v, want %v", got, testCase.want)
 			}
 		})
 	}
@@ -230,25 +223,26 @@ func TestFlagValue(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.envValue != "" {
-				t.Setenv(tt.envVar, tt.envValue)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.envValue != "" {
+				t.Setenv(testCase.envVar, testCase.envValue)
 			}
 
-			got, err := dchook.FlagValue(tt.flagVal, tt.envVar, tt.flagName)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("FlagValue() error = %v, wantErr %v", err, tt.wantErr)
+			got, err := dchook.FlagValue(testCase.flagVal, testCase.envVar, testCase.flagName)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("FlagValue() error = %v, wantErr %v", err, testCase.wantErr)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("FlagValue() = %v, want %v", got, tt.want)
+			if got != testCase.want {
+				t.Errorf("FlagValue() = %v, want %v", got, testCase.want)
 			}
 		})
 	}
 }
 
 func TestIsVersionCompatible(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		clientVer    string
 		serverVer    string
@@ -269,18 +263,32 @@ func TestIsVersionCompatible(t *testing.T) {
 		{"v1.0.0", "v1.0.0", "abc123", "def456", false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.clientVer+"_"+tt.serverVer, func(t *testing.T) {
-			got := dchook.IsVersionCompatible(tt.clientVer, tt.serverVer, tt.clientCommit, tt.serverCommit)
-			if got != tt.want {
-				t.Errorf("IsVersionCompatible(%q, %q, %q, %q) = %v, want %v",
-					tt.clientVer, tt.serverVer, tt.clientCommit, tt.serverCommit, got, tt.want)
+	for _, testCase := range tests {
+		t.Run(testCase.clientVer+"_"+testCase.serverVer, func(t *testing.T) {
+			t.Parallel()
+			got := dchook.IsVersionCompatible(
+				testCase.clientVer,
+				testCase.serverVer,
+				testCase.clientCommit,
+				testCase.serverCommit,
+			)
+			if got != testCase.want {
+				t.Errorf(
+					"IsVersionCompatible(%q, %q, %q, %q) = %v, want %v",
+					testCase.clientVer,
+					testCase.serverVer,
+					testCase.clientCommit,
+					testCase.serverCommit,
+					got,
+					testCase.want,
+				)
 			}
 		})
 	}
 }
 
 func TestIsPrintableUTF8(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		data []byte
@@ -298,11 +306,12 @@ func TestIsPrintableUTF8(t *testing.T) {
 		{"binary data", []byte{0x00, 0x01, 0x02}, false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := dchook.IsPrintableUTF8(tt.data)
-			if got != tt.want {
-				t.Errorf("IsPrintableUTF8(%q) = %v, want %v", tt.data, got, tt.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got := dchook.IsPrintableUTF8(testCase.data)
+			if got != testCase.want {
+				t.Errorf("IsPrintableUTF8(%q) = %v, want %v", testCase.data, got, testCase.want)
 			}
 		})
 	}

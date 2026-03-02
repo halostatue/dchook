@@ -1,0 +1,151 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+    - golines
+
+  settings:
+    gofumpt:
+      extra-rules: true
+
+    goimports:
+      local-prefixes:
+        - github.com/halostatue/dchook
+
+    golines:
+      reformat-tags: false
+
+linters:
+  default: standard
+
+  # Enable specific linter.
+  enable:
+    - asciicheck
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - decorder
+    - dupl
+    - durationcheck
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forcetypeassert
+    - funcorder
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - godot
+    - godox
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - iotamixing
+    - ireturn
+    - lll
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - modernize
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - wrapcheck
+    - zerologlint
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gocognit
+          - cyclop
+          - funlen
+          - gocyclo
+          - maintidx
+      - path: cmd/dchook/handlers.go
+        linters:
+          - gocognit
+          - cyclop
+          - funlen
+          - gocyclo
+          - maintidx
+
+  # All available settings of specific linters.
+  settings:
+
+    copyloopvar:
+      check-alias: true
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    gocognit:
+      min-complexity: 20
+
+    goconst:
+      # Minimum occurrences of constant string count to trigger issue.
+      # Default: 3
+      min-occurrences: 2
+      numbers: true
+
+    tagliatelle:
+      case:
+        rules:
+          json: snake
