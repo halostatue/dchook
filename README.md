@@ -225,6 +225,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/app:/compose/app:ro
+      # Mount Docker config for private registry authentication
+      - ~/.docker/config.json:/home/nonroot/.docker/config.json:ro
     secrets:
       - webhook_secret
     environment:
@@ -240,6 +242,12 @@ secrets:
   webhook_secret:
     file: ./webhook_secret.txt
 ```
+
+> [!NOTE]
+> **Private Registry Authentication**: If your compose file references images from
+> private registries, mount your Docker config file (shown above) or run
+> `docker login <registry>` on the host before starting dchook. The container
+> user needs access to these credentials to pull images.
 
 ### Generate Webhook Secret
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -104,8 +105,12 @@ func (d *DockerComposeAdapter) executePull(deployment *Deployment) bool {
 			"deployment pull failed",
 			"deployment_id",
 			deployment.ID,
+			"command",
+			d.formatCommand("pull"),
 			"exit_code",
 			pullExitCode,
+			"output",
+			string(pullOutput),
 			"error",
 			pullErr,
 		)
@@ -148,8 +153,12 @@ func (d *DockerComposeAdapter) executeRestart(deployment *Deployment) {
 			"deployment up failed",
 			"deployment_id",
 			deployment.ID,
+			"command",
+			d.formatCommand("up", "-d", "--remove-orphans"),
 			"exit_code",
 			upExitCode,
+			"output",
+			string(upOutput),
 			"error",
 			upErr,
 		)
@@ -175,11 +184,7 @@ func (d *DockerComposeAdapter) restart() ([]byte, error) {
 }
 
 func (d *DockerComposeAdapter) runDocker(commandArgs ...string) ([]byte, error) {
-	args := []string{"compose", "-f", d.ComposeFile}
-	if d.ProjectName != "" {
-		args = append(args, "-p", d.ProjectName)
-	}
-	args = append(args, commandArgs...)
+	args := d.buildArgs(commandArgs...)
 
 	//nolint:gosec // parameters do docker compose are validated
 	cmd := exec.CommandContext(context.Background(), "docker", args...)
@@ -188,4 +193,17 @@ func (d *DockerComposeAdapter) runDocker(commandArgs ...string) ([]byte, error) 
 		return output, fmt.Errorf("docker compose command failed: %w", err)
 	}
 	return output, nil
+}
+
+func (d *DockerComposeAdapter) formatCommand(commandArgs ...string) string {
+	args := append([]string{"docker"}, d.buildArgs(commandArgs...)...)
+	return strings.Join(args, " ")
+}
+
+func (d *DockerComposeAdapter) buildArgs(commandArgs ...string) []string {
+	args := []string{"compose", "-f", d.ComposeFile}
+	if d.ProjectName != "" {
+		args = append(args, "-p", d.ProjectName)
+	}
+	return append(args, commandArgs...)
 }

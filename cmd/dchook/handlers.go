@@ -274,7 +274,12 @@ func createStatusHandler(
 	}
 }
 
-func handleListDeployments(w http.ResponseWriter, r *http.Request, cfg *HandlerConfig, limiter *dchook.RateLimiter) {
+func handleListDeployments(
+	w http.ResponseWriter,
+	r *http.Request,
+	cfg *HandlerConfig,
+	limiter *dchook.RateLimiter,
+) {
 	timestamp := r.Header.Get("X-Dchook-Timestamp")
 	signature := r.Header.Get("X-Dchook-Signature")
 	nonce := r.Header.Get("X-Dchook-Nonce")
@@ -320,7 +325,13 @@ func handleListDeployments(w http.ResponseWriter, r *http.Request, cfg *HandlerC
 	}
 }
 
-func handleGetDeployment(w http.ResponseWriter, r *http.Request, deploymentID string, cfg *HandlerConfig, limiter *dchook.RateLimiter) {
+func handleGetDeployment(
+	w http.ResponseWriter,
+	r *http.Request,
+	deploymentID string,
+	cfg *HandlerConfig,
+	limiter *dchook.RateLimiter,
+) {
 	timestamp := r.Header.Get("X-Dchook-Timestamp")
 	signature := r.Header.Get("X-Dchook-Signature")
 
