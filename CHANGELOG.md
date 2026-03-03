@@ -1,5 +1,9 @@
 # `dchook` Changelog
 
+## 1.2.1 / 2026-03-02
+
+- Improved logging on the listener.
+
 ## 1.2.0 / 2026-03-02
 
 Improved deployment tracking and security validation.
