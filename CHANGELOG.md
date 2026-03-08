@@ -1,5 +1,15 @@
 # `dchook` Changelog
 
+## 1.2.3 / 2026-03-08
+
+- Loosened a security check preventing `/dev`, which also prevented `/dev/fd/*`
+  -- required for Bash process substitution. Now `/dev/fd` is permitted, but not
+  `/dev`.
+
+- Fixed URL handling to strip trailing slashes before joining path parts.
+
+- Removed proxy logic debugging.
+
 ## 1.2.2 / 2026-03-07
 
 - Added proxy logic debugging. This may be removed in the future.

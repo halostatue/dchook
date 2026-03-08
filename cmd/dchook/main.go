@@ -255,7 +255,6 @@ func main() {
 	// Register handlers (most specific first)
 	http.HandleFunc("/deploy/status/", createStatusHandler(cfg, statusLimiter))
 	http.HandleFunc("/deploy", createDeployHandler(cfg, deployLimiter))
-	http.HandleFunc("/proxy", createProxyHandler(cfg, statusLimiter))
 	http.HandleFunc("/health", createHealthHandler(cfg))
 
 	slog.Info(

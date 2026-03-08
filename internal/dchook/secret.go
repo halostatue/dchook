@@ -26,8 +26,9 @@ var (
 // but the last part must not be a symlink).
 //
 // On Unix-style platforms, the paths must not be pointing to forbidden ssystem
-// directories or files (`/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev`) and the
-// file must be *either* a regular file with `0600` / `0400` permissions or a named pipe.
+// directories or files (`/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev` except
+// `/dev/fd` for process substitution) and the file must be *either* a regular file with
+// `0600` / `0400` permissions or a named pipe.
 func ReadSecretFileStrict(path string) (string, error) {
 	return readSecretFile(path, true)
 }
@@ -38,8 +39,9 @@ func ReadSecretFileStrict(path string) (string, error) {
 // path, but the last part must not be a symlink).
 //
 // On Unix-style platforms, the paths must not be pointing to forbidden ssystem
-// directories or files (`/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev`) and the
-// file must be *either* a regular file with `0600` / `0400` permissions or a named pipe.
+// directories or files (`/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev` except
+// `/dev/fd` for process substitution) and the file must be *either* a regular file with
+// `0600` / `0400` permissions or a named pipe.
 func ReadSecretFileLax(path string) (string, error) {
 	return readSecretFile(path, false)
 }
@@ -91,11 +93,17 @@ func validateSecretFile(path string, requireAbsolute bool) (string, error) {
 	}
 
 	// Prevent reading from sensitive system directories
-	forbiddenPrefixes := []string{"/etc/shadow", "/etc/passwd", "/proc", "/sys", "/dev"}
+	// Note: /dev/fd is allowed for process substitution (e.g., <(echo secret))
+	forbiddenPrefixes := []string{"/etc/shadow", "/etc/passwd", "/proc", "/sys"}
 	for _, prefix := range forbiddenPrefixes {
 		if strings.HasPrefix(resolvedPath, prefix) {
 			return "", fmt.Errorf("%w: %q", errSecretForbiddenDir, path)
 		}
+	}
+
+	// Block /dev except /dev/fd (process substitution)
+	if strings.HasPrefix(resolvedPath, "/dev/") && !strings.HasPrefix(resolvedPath, "/dev/fd/") {
+		return "", fmt.Errorf("%w: %q", errSecretForbiddenDir, path)
 	}
 
 	// Check file type and permissions

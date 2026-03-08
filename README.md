@@ -97,15 +97,15 @@ during the build process for binaries on [releases][releases].
 `dchook` is configured via environment variables or command-line flags. Flags
 take precedence.
 
-| Variable                    | Flag           | Required / Default     | Purpose                                         |
-| --------------------------- | -------------- | ---------------------- | ----------------------------------------------- |
-| `DCHOOK_SECRET_FILE`        | `-s`           | ✅                     | Path to file containing webhook secret          |
-| `DCHOOK_COMPOSE_FILE`       | `-c`           | ✅                     | Path to `docker-compose.yml` to manage          |
-| `DCHOOK_COMPOSE_PROJECT`    | `--project`    |                        | Docker Compose project name (optional)          |
+| Variable                    | Flag           | Required / Default     | Purpose                                                            |
+| --------------------------- | -------------- | ---------------------- | ------------------------------------------------------------------ |
+| `DCHOOK_SECRET_FILE`        | `-s`           | ✅                     | Path to file containing webhook secret                             |
+| `DCHOOK_COMPOSE_FILE`       | `-c`           | ✅                     | Path to `docker-compose.yml` to manage                             |
+| `DCHOOK_COMPOSE_PROJECT`    | `--project`    |                        | Docker Compose project name (optional)                             |
 | `DCHOOK_EXCEPT_SERVICES`    |                |                        | **Experimental:** Comma-separated services to exclude from updates |
-| `DCHOOK_BIND_ADDRESS`       | `-b`           | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces) |
-| `DCHOOK_PORT`               | `-p`           | 7999                   | HTTP port to listen on                          |
-| `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms` | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |
+| `DCHOOK_BIND_ADDRESS`       | `-b`           | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces)                    |
+| `DCHOOK_PORT`               | `-p`           | 7999                   | HTTP port to listen on                                             |
+| `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms` | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms                    |
 
 **Security Requirements:**
 
@@ -115,6 +115,7 @@ take precedence.
   - Must be an absolute path
   - On Unix: Must have 0600 or 0400 permissions
   - Cannot be in `/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or `/dev`
+    (except `/dev/fd` for process substitution)
 
 - **Compose file** (`DCHOOK_COMPOSE_FILE`):
   - Must not be a symlink
@@ -148,7 +149,7 @@ Flags take precedence.
 - **Secret file** (`DCHOOK_SECRET_FILE`):
   - Must not be a symlink
   - On Unix: Cannot be in `/etc/shadow`, `/etc/passwd`, `/proc`, `/sys`, or
-    `/dev`
+    `/dev` (except `/dev/fd` for process substitution)
 
 > [!NOTE]
 > `DCHOOK_URL` should be the base URL of the listener, not including `/deploy`.
@@ -245,8 +246,8 @@ secrets:
 ```
 
 > [!NOTE]
-> **Private Registry Authentication**: If your compose file references images from
-> private registries, mount your Docker config file (shown above) or run
+> **Private Registry Authentication**: If your compose file references images
+> from private registries, mount your Docker config file (shown above) or run
 > `docker login <registry>` on the host before starting dchook. The container
 > user needs access to these credentials to pull images.
 
@@ -435,7 +436,8 @@ The JSON response will become the default response in v1.3.
 - `GET /deploy/status/{id}`: Get deployment status by ID
   - Requires HMAC authentication via headers
   - Returns deployment details including:
-    - `status`: Current state (`"pending"`, `"pulling"`, `"restarting"`, `"complete"`, `"failed"`)
+    - `status`: Current state (`"pending"`, `"pulling"`, `"restarting"`,
+      `"complete"`, `"failed"`)
     - `pull`: Pull operation results (exit code, output, duration)
     - `restart`: Restart operation results (exit code, output, duration)
     - `timestamp`: When deployment was triggered
