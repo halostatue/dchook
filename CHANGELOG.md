@@ -1,5 +1,11 @@
 # `dchook` Changelog
 
+## 1.2.2 / 2026-03-07
+
+- Added proxy logic debugging. This may be removed in the future.
+- Added experimental `DCHOOK_EXCEPT_SERVICES` environment variable to exclude
+  specific services from updates (e.g., when dchook manages its own stack).
+
 ## 1.2.1 / 2026-03-02
 
 - Improved logging on the listener.

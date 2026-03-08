@@ -79,6 +79,8 @@ Environment Variables:
   DCHOOK_SECRET_FILE         *    Path to webhook secret file
   DCHOOK_COMPOSE_FILE        *    Path to docker-compose.yml to manage
   DCHOOK_COMPOSE_PROJECT          Docker Compose project name
+  DCHOOK_EXCEPT_SERVICES          (Experimental) Comma-separated list of
+                                  services to exclude from updates
   DCHOOK_BIND_ADDRESS             Bind address (default: 127.0.0.1)
   DCHOOK_PORT                     HTTP port to listen on (default: 7999)
   DCHOOK_ALLOWED_ALGORITHMS       Comma-separated list of allowed HMAC
@@ -98,6 +100,7 @@ Examples:
 `, progName, progName)
 }
 
+//nolint:gocognit // Will be refactored when switching to Docker API approach
 func main() {
 	flag.Usage = func() {
 		printUsage(os.Stderr)
@@ -170,9 +173,26 @@ func main() {
 		}
 	}
 
+	//nolint:errcheck // Optional
+	exceptServices, _ := dchook.FlagValue(
+		"",
+		"DCHOOK_EXCEPT_SERVICES",
+		"",
+	)
+
+	var exceptServicesList []string
+	if exceptServices != "" {
+		for svc := range strings.SplitSeq(exceptServices, ",") {
+			if svc = strings.TrimSpace(svc); svc != "" {
+				exceptServicesList = append(exceptServicesList, svc)
+			}
+		}
+	}
+
 	controller := &DockerComposeAdapter{
-		ComposeFile: composeFilePath,
-		ProjectName: projectName,
+		ComposeFile:    composeFilePath,
+		ProjectName:    projectName,
+		ExceptServices: exceptServicesList,
 	}
 	dockerAvailable := true
 	if err := controller.Available(); err != nil {
@@ -235,6 +255,7 @@ func main() {
 	// Register handlers (most specific first)
 	http.HandleFunc("/deploy/status/", createStatusHandler(cfg, statusLimiter))
 	http.HandleFunc("/deploy", createDeployHandler(cfg, deployLimiter))
+	http.HandleFunc("/proxy", createProxyHandler(cfg, statusLimiter))
 	http.HandleFunc("/health", createHealthHandler(cfg))
 
 	slog.Info(

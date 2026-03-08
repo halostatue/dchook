@@ -102,6 +102,7 @@ take precedence.
 | `DCHOOK_SECRET_FILE`        | `-s`           | ✅                     | Path to file containing webhook secret          |
 | `DCHOOK_COMPOSE_FILE`       | `-c`           | ✅                     | Path to `docker-compose.yml` to manage          |
 | `DCHOOK_COMPOSE_PROJECT`    | `--project`    |                        | Docker Compose project name (optional)          |
+| `DCHOOK_EXCEPT_SERVICES`    |                |                        | **Experimental:** Comma-separated services to exclude from updates |
 | `DCHOOK_BIND_ADDRESS`       | `-b`           | `127.0.0.1`            | Bind address (use `0.0.0.0` for all interfaces) |
 | `DCHOOK_PORT`               | `-p`           | 7999                   | HTTP port to listen on                          |
 | `DCHOOK_ALLOWED_ALGORITHMS` | `--algorithms` | `sha256,sha384,sha512` | Comma-separated list of allowed HMAC algorithms |

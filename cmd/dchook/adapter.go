@@ -20,8 +20,9 @@ type ContainerAdapter interface {
 
 // DockerComposeAdapter implements ContainerAdapter using docker compose.
 type DockerComposeAdapter struct {
-	ComposeFile string
-	ProjectName string
+	ComposeFile    string
+	ProjectName    string
+	ExceptServices []string
 }
 
 func (d *DockerComposeAdapter) Available() error {
@@ -180,7 +181,52 @@ func (d *DockerComposeAdapter) pull() ([]byte, error) {
 }
 
 func (d *DockerComposeAdapter) restart() ([]byte, error) {
-	return d.runDocker("up", "-d", "--remove-orphans")
+	args := []string{"up", "-d", "--remove-orphans"}
+
+	if len(d.ExceptServices) > 0 {
+		services, err := d.getServices()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get services: %w", err)
+		}
+
+		filtered := d.filterServices(services)
+		if len(filtered) > 0 {
+			args = append(args, filtered...)
+		}
+	}
+
+	return d.runDocker(args...)
+}
+
+func (d *DockerComposeAdapter) getServices() ([]string, error) {
+	output, err := d.runDocker("config", "--services")
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var services []string
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			services = append(services, line)
+		}
+	}
+	return services, nil
+}
+
+func (d *DockerComposeAdapter) filterServices(services []string) []string {
+	exceptMap := make(map[string]bool)
+	for _, svc := range d.ExceptServices {
+		exceptMap[svc] = true
+	}
+
+	var filtered []string
+	for _, svc := range services {
+		if !exceptMap[svc] {
+			filtered = append(filtered, svc)
+		}
+	}
+	return filtered
 }
 
 func (d *DockerComposeAdapter) runDocker(commandArgs ...string) ([]byte, error) {
