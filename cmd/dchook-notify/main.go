@@ -28,6 +28,7 @@ const (
 	subcommandDeploy = "deploy"
 	subcommandStatus = "status"
 	subcommandList   = "list"
+	subcommandProxy  = "proxy"
 
 	exitSuccess = 0
 
@@ -105,7 +106,7 @@ func main() {
 	subcommand := args[0]
 
 	if subcommand == subcommandDeploy || subcommand == subcommandStatus ||
-		subcommand == subcommandList {
+		subcommand == subcommandList || subcommand == subcommandProxy {
 		args = args[1:]
 	} else {
 		// This will be a warning in version 1.3 and an error in later versions.
@@ -119,6 +120,8 @@ func main() {
 		statusCommand(args)
 	case subcommandList:
 		listCommand(args)
+	case subcommandProxy:
+		proxyCommand(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", subcommand)
 		flag.Usage()
@@ -470,4 +473,14 @@ func listCommand(args []string) {
 
 	baseURL, secret, algo := getConfig()
 	makeStatusRequest(baseURL+"/deploy/status", "", secret, algo)
+}
+
+func proxyCommand(args []string) {
+	if len(args) != 0 {
+		fmt.Fprintf(os.Stderr, "Usage: dchook-notify proxy\n")
+		os.Exit(exitConfigError)
+	}
+
+	baseURL, secret, algo := getConfig()
+	makeStatusRequest(baseURL+"/proxy", "", secret, algo)
 }
