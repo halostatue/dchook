@@ -213,7 +213,7 @@ func main() {
 
 	history := NewDeploymentHistory()
 
-	ipExtractor, err := clientip.New(clientip.PresetVMReverseProxy())
+	ipResolver, err := clientip.New(clientip.PresetVMReverseProxy())
 	if err != nil {
 		slog.Error("failed to create IP extractor", "error", err)
 		os.Exit(1)
@@ -243,7 +243,7 @@ func main() {
 	// Create handler configuration
 	cfg := &HandlerConfig{
 		dockerAvailable:   dockerAvailable,
-		ipExtractor:       ipExtractor,
+		ipResolver:        ipResolver,
 		secret:            secret,
 		allowedAlgorithms: allowedAlgorithms,
 		adapter:           controller,

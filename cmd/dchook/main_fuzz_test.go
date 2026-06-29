@@ -19,14 +19,14 @@ func FuzzDeployHandler(f *testing.F) {
 	limiter := dchook.NewRateLimiter(10, time.Minute, 5, time.Hour, 10*time.Minute)
 	history := NewDeploymentHistory()
 	adapter := &MockAdapter{}
-	ipExtractor, err := clientip.New(clientip.PresetVMReverseProxy())
+	ipResolver, err := clientip.New(clientip.PresetVMReverseProxy())
 	if err != nil {
 		f.Fatal(err)
 	}
 
 	cfg := &HandlerConfig{
 		dockerAvailable:   true,
-		ipExtractor:       ipExtractor,
+		ipResolver:        ipResolver,
 		secret:            secret,
 		allowedAlgorithms: allowedAlgos,
 		adapter:           adapter,
