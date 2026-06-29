@@ -33,6 +33,7 @@ func FuzzDeployHandler(f *testing.F) {
 		history:           history,
 		version:           "v1.0.0",
 		commit:            "abc",
+		allowDevVersions:  false,
 	}
 
 	handler := createDeployHandler(cfg, limiter)

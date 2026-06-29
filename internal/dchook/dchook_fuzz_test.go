@@ -31,14 +31,23 @@ func FuzzGenerateSignature(f *testing.F) {
 }
 
 func FuzzIsVersionCompatible(f *testing.F) {
-	f.Add("v1.0.0", "v1.0.0", "abc", "abc")
-	f.Add("dev", "v1.0.0", "abc", "def")
-	f.Add("v1.0.0", "v2.0.0", "abc", "def")
-	f.Add("invalid", "v1.0.0", "abc", "def")
+	f.Add("v1.0.0", "v1.0.0", "abc", "abc", true)
+	f.Add("dev", "v1.0.0", "abc", "def", true)
+	f.Add("dev", "v1.0.0", "abc", "def", false)
+	f.Add("v1.0.0", "v2.0.0", "abc", "def", false)
+	f.Add("invalid", "v1.0.0", "abc", "def", false)
 
-	f.Fuzz(func(_ *testing.T, clientVer, serverVer, clientCommit, serverCommit string) {
-		_ = dchook.IsVersionCompatible(clientVer, serverVer, clientCommit, serverCommit)
-	})
+	f.Fuzz(
+		func(_ *testing.T, clientVer, serverVer, clientCommit, serverCommit string, allowDev bool) {
+			_ = dchook.IsVersionCompatible(
+				clientVer,
+				serverVer,
+				clientCommit,
+				serverCommit,
+				allowDev,
+			)
+		},
+	)
 }
 
 func FuzzIsPrintableUTF8(f *testing.F) {

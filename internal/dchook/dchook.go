@@ -51,7 +51,10 @@ func parseSignature(signature string) (string, string) {
 }
 
 // IsVersionCompatible checks if client and server versions are compatible.
-func IsVersionCompatible(clientVer, serverVer, clientCommit, serverCommit string) bool {
+func IsVersionCompatible(
+	clientVer, serverVer, clientCommit, serverCommit string,
+	allowDev bool,
+) bool {
 	client, err := ParseVersion(clientVer, clientCommit)
 	if err != nil {
 		return false
@@ -62,7 +65,7 @@ func IsVersionCompatible(clientVer, serverVer, clientCommit, serverCommit string
 		return false
 	}
 
-	return client.IsCompatible(server)
+	return client.IsCompatible(server, allowDev)
 }
 
 // IsPrintableUTF8 checks if data is valid UTF-8 and contains only printable characters.

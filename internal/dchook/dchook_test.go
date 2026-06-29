@@ -248,19 +248,22 @@ func TestIsVersionCompatible(t *testing.T) {
 		serverVer    string
 		clientCommit string
 		serverCommit string
+		allowDev     bool
 		want         bool
 	}{
-		{"dev", "v1.0.0", "abc", "def", true},
-		{"v1.0.0", "dev", "abc", "def", true},
-		{"v1.0.0", "v1.0.1", "abc", "def", true},
-		{"v1.0.0", "v1.1.0", "abc", "def", false},
-		{"v1.0.0", "v2.0.0", "abc", "def", false},
-		{"v1.1.0", "v1.0.0", "abc", "def", false},
-		{"1.0.0", "1.0.1", "abc", "def", true},
-		{"invalid", "v1.0.0", "abc", "def", false},
-		{"v1", "v1.0.0", "abc", "def", false},
-		{"v1.0.0", "v1.0.0", "abc123", "abc123", true},
-		{"v1.0.0", "v1.0.0", "abc123", "def456", false},
+		{"dev", "v1.0.0", "abc", "def", true, true},
+		{"dev", "v1.0.0", "abc", "def", false, false},
+		{"v1.0.0", "dev", "abc", "def", true, true},
+		{"v1.0.0", "dev", "abc", "def", false, false},
+		{"v1.0.0", "v1.0.1", "abc", "def", false, true},
+		{"v1.0.0", "v1.1.0", "abc", "def", false, false},
+		{"v1.0.0", "v2.0.0", "abc", "def", false, false},
+		{"v1.1.0", "v1.0.0", "abc", "def", false, false},
+		{"1.0.0", "1.0.1", "abc", "def", false, true},
+		{"invalid", "v1.0.0", "abc", "def", false, false},
+		{"v1", "v1.0.0", "abc", "def", false, false},
+		{"v1.0.0", "v1.0.0", "abc123", "abc123", false, true},
+		{"v1.0.0", "v1.0.0", "abc123", "def456", false, false},
 	}
 
 	for _, testCase := range tests {
@@ -271,14 +274,16 @@ func TestIsVersionCompatible(t *testing.T) {
 				testCase.serverVer,
 				testCase.clientCommit,
 				testCase.serverCommit,
+				testCase.allowDev,
 			)
 			if got != testCase.want {
 				t.Errorf(
-					"IsVersionCompatible(%q, %q, %q, %q) = %v, want %v",
+					"IsVersionCompatible(%q, %q, %q, %q, %v) = %v, want %v",
 					testCase.clientVer,
 					testCase.serverVer,
 					testCase.clientCommit,
 					testCase.serverCommit,
+					testCase.allowDev,
 					got,
 					testCase.want,
 				)

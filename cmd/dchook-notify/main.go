@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/itchyny/gojq"
+	flag "github.com/spf13/pflag"
 
 	"github.com/halostatue/dchook/internal/dchook"
 )
@@ -44,19 +46,37 @@ const (
 	exitServerError        = 50 // 500
 	exitServiceUnavailable = 53 // 503
 	exitUnknownStatus      = 99 // Other non-202
+
+	devVersion = "dev"
 )
 
 var (
-	version = "dev"
+	version = devVersion
 	commit  = "unknown"
 
-	url         = flag.String("u", "", "Webhook endpoint URL")
-	secretFile  = flag.String("s", "", "Path to webhook secret file")
-	algorithm   = flag.String("a", "", "Hash algorithm (sha256, sha384, sha512)")
-	quiet       = flag.Bool("q", false, "Quiet mode (suppress output, return only exit code)")
-	jsonOutput  = flag.Bool("j", false, "JSON output mode (machine-readable)")
-	showVersion = flag.Bool("version", false, "Show version information")
-	showHelp    = flag.Bool("help", false, "Show help message")
+	url        = flag.StringP("url", "u", "", "Webhook endpoint URL")
+	secretFile = flag.StringP("secret-file", "s", "", "Path to webhook secret file")
+	algorithm  = flag.StringP(
+		"algorithms",
+		"a",
+		"",
+		"Hash algorithm (sha256, sha384, sha512); only the first is used",
+	)
+	quiet = flag.BoolP(
+		"quiet",
+		"q",
+		false,
+		"Quiet mode (suppress output, return only exit code)",
+	)
+	jsonOutput       = flag.BoolP("json", "j", false, "JSON output mode (machine-readable)")
+	jqExpr           = flag.String("jq", "", "jq expression to filter JSON response")
+	allowDevVersions = flag.Bool(
+		"allow-dev-versions",
+		false,
+		"Allow dev version compatibility bypass",
+	)
+	showVersion = flag.BoolP("version", "V", false, "Show version information")
+	showHelp    = flag.BoolP("help", "h", false, "Show help message")
 )
 
 func haltf(code int, format string, args ...any) {
@@ -75,6 +95,50 @@ func successf(format string, args ...any) {
 		fmt.Printf(format, args...)
 		if len(format) > 0 && format[len(format)-1] != '\n' {
 			fmt.Println()
+		}
+	}
+}
+
+// outputJSON prints JSON data, optionally filtered through a jq expression.
+func outputJSON(data []byte) {
+	if *quiet {
+		return
+	}
+
+	if *jqExpr == "" {
+		fmt.Println(string(data))
+		return
+	}
+
+	query, err := gojq.Parse(*jqExpr)
+	if err != nil {
+		haltf(exitConfigError, "Error: invalid --jq expression: %v", err)
+	}
+
+	var input any
+	if err := json.Unmarshal(data, &input); err != nil {
+		haltf(exitPayloadError, "Error: response is not valid JSON for --jq filtering: %v", err)
+	}
+
+	iter := query.Run(input)
+	for {
+		v, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if err, isErr := v.(error); isErr {
+			haltf(exitPayloadError, "Error: --jq evaluation failed: %v", err)
+		}
+
+		switch val := v.(type) {
+		case string:
+			fmt.Println(val)
+		default:
+			out, err := json.Marshal(v)
+			if err != nil {
+				haltf(exitPayloadError, "Error: --jq result serialization failed: %v", err)
+			}
+			fmt.Println(string(out))
 		}
 	}
 }
@@ -108,7 +172,10 @@ func main() {
 		subcommand == subcommandList {
 		args = args[1:]
 	} else {
-		// This will be a warning in version 1.3 and an error in later versions.
+		fmt.Fprintf(
+			os.Stderr,
+			"Warning: implicit deploy subcommand is deprecated; use 'dchook-notify deploy' explicitly (will be an error in v2)\n",
+		)
 		subcommand = subcommandDeploy
 	}
 
@@ -149,7 +216,7 @@ Options:
 
 	//nolint:errcheck,gosec // Writing to stderr/stdout
 	fmt.Fprintf(w, `
-Note that -q takes precedence over -j.
+Note that -q takes precedence over -j and --jq. --jq implies -j.
 
 Environment Variables:
   DCHOOK_URL           *    Webhook endpoint URL
@@ -187,6 +254,10 @@ func deployCommand(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "Usage: dchook-notify deploy <payload-file>\n")
 		os.Exit(exitConfigError)
+	}
+
+	if version == devVersion && !*allowDevVersions {
+		haltf(exitConfigError, "Error: dev version requires --allow-dev-versions flag")
 	}
 
 	baseURL, secret, algo := getConfig()
@@ -322,9 +393,14 @@ func handleDeployResponse(resp *http.Response, respBody []byte) {
 }
 
 func handleAcceptedDeploy(resp *http.Response, respBody []byte) {
+	// --jq implies JSON output mode
+	if *jqExpr != "" {
+		outputJSON(respBody)
+		return
+	}
+
 	var jsonResp map[string]string
 	if json.Unmarshal(respBody, &jsonResp) != nil || jsonResp["deployment_id"] == "" {
-		// No valid deployment_id in response
 		successf("✓ Webhook accepted (status: %d)", resp.StatusCode)
 		if len(respBody) > 0 && !*quiet {
 			fmt.Printf("Response: %s\n", string(respBody))
@@ -332,39 +408,31 @@ func handleAcceptedDeploy(resp *http.Response, respBody []byte) {
 		return
 	}
 
-	deployID := jsonResp["deployment_id"]
 	if *jsonOutput {
 		fmt.Println(string(respBody))
 	} else {
-		successf("✓ Webhook accepted (deployment_id: %s)", deployID)
+		successf("✓ Webhook accepted (deployment_id: %s)", jsonResp["deployment_id"])
 	}
 }
 
 func getConfig() (string, string, string) {
-	webhookURL, err := dchook.FlagValue(*url, "DCHOOK_URL", "-u")
+	webhookURL, err := dchook.FlagValue(*url, "DCHOOK_URL", "--url/-u")
 	if err != nil {
 		haltf(exitConfigError, "%v", err)
 	}
 
-	// v1.2: Warn and strip /deploy suffix (will be error in v1.3+)
-	if strings.HasSuffix(webhookURL, "/deploy/") {
-		fmt.Fprintf(
-			os.Stderr,
-			"Warning: DCHOOK_URL should not end with /deploy/ (will be an error in v1.3+)\n",
+	// v1.3: Error if URL ends with /deploy
+	if strings.HasSuffix(webhookURL, "/deploy/") || strings.HasSuffix(webhookURL, "/deploy") {
+		haltf(
+			exitConfigError,
+			"Error: DCHOOK_URL should be the base URL (e.g., https://example.com), not including /deploy",
 		)
-		webhookURL = strings.TrimSuffix(webhookURL, "/deploy/")
-	} else if strings.HasSuffix(webhookURL, "/deploy") {
-		fmt.Fprintf(
-			os.Stderr,
-			"Warning: DCHOOK_URL should not end with /deploy (will be an error in v1.3+)\n",
-		)
-		webhookURL = strings.TrimSuffix(webhookURL, "/deploy")
 	}
 
 	// Strip trailing slash to avoid double slashes when constructing paths
 	webhookURL = strings.TrimSuffix(webhookURL, "/")
 
-	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "-s")
+	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "--secret-file/-s")
 	if err != nil {
 		haltf(exitConfigError, "%v", err)
 	}
@@ -374,9 +442,14 @@ func getConfig() (string, string, string) {
 		haltf(exitConfigError, "%v", err)
 	}
 
-	algo, err := dchook.FlagValue(*algorithm, "DCHOOK_ALGORITHM", "-a")
+	algo, err := dchook.FlagValue(*algorithm, "DCHOOK_ALGORITHM", "--algorithms/-a")
 	if err != nil {
 		algo = dchook.AlgorithmSHA256
+	}
+
+	// Only the first algorithm is used currently
+	if idx := strings.Index(algo, ","); idx >= 0 {
+		algo = strings.TrimSpace(algo[:idx])
 	}
 
 	if algo != dchook.AlgorithmSHA256 && algo != dchook.AlgorithmSHA384 &&
@@ -436,7 +509,7 @@ func makeStatusRequest(endpoint, payload, secret, algo string) {
 	}
 
 	if resp.StatusCode == http.StatusOK {
-		fmt.Println(string(respBody))
+		outputJSON(respBody)
 	} else {
 		msg := "Request failed (status: " + strconv.Itoa(resp.StatusCode) + ")"
 		if len(respBody) > 0 {
@@ -460,6 +533,10 @@ func statusCommand(args []string) {
 		os.Exit(exitConfigError)
 	}
 
+	if version == devVersion && !*allowDevVersions {
+		haltf(exitConfigError, "Error: dev version requires --allow-dev-versions flag")
+	}
+
 	baseURL, secret, algo := getConfig()
 	deploymentID := args[0]
 	makeStatusRequest(baseURL+"/deploy/status/"+deploymentID, deploymentID, secret, algo)
@@ -469,6 +546,10 @@ func listCommand(args []string) {
 	if len(args) != 0 {
 		fmt.Fprintf(os.Stderr, "Usage: dchook-notify list\n")
 		os.Exit(exitConfigError)
+	}
+
+	if version == devVersion && !*allowDevVersions {
+		haltf(exitConfigError, "Error: dev version requires --allow-dev-versions flag")
 	}
 
 	baseURL, secret, algo := getConfig()

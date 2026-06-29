@@ -1,5 +1,38 @@
 # `dchook` Changelog
 
+## 1.3.0 / 2026-06-29
+
+### New Feature
+
+- `dchook-notify` now supports a `--jq` parameter that uses [`gojq`][gojq] to
+  provide post-processing of the response payload. Using `--jq` implies
+  `--json`.
+
+- Most flags on `dchook` and `dchook-notify` now have both short (`-p`) and long
+  (`--port`) variants.
+
+### Security Enhancements
+
+- `dev` versions (local builds) are no longer supported by either `dchook` or
+  `dchook-notify` unless `--allow-dev-versions` is provided on _both_
+  command-lines.
+
+  This closes a security hole that exists where version checks are skipped on
+  `dev` versions.
+
+### Deprecations and Breaking Changes
+
+- `DCHOOK_URL` should be the base URL (e.g., `https://example.com`), not
+  including `/deploy`. `dchook-notify` halts with an error.
+
+- `dchook-notify` will warn when no subcommand is given before executing
+  `dchook-notify deploy`. In v2, `dchook-notify` will halt with an error.
+
+### Testing
+
+- The integration tests now perform response validation to ensure that the
+  responses are the expected data.
+
 ## 1.2.3 / 2026-03-08
 
 - Loosened a security check preventing `/dev`, which also prevented `/dev/fd/*`
@@ -118,3 +151,5 @@ unavailable / 503 and 44 for deployment ID not found).
 ## 1.0.0 / 2026-02-20
 
 - Initial release.
+
+[gojq]: https://github.com/itchyny/gojq

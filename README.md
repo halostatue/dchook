@@ -1,7 +1,8 @@
 # dchook: `docker compose` Hook
 
-[![Go Report Card][shield-goreport]][goreport]
-[![Apache 2.0][shield-licence]][licence] ![Coveralls][shield-coveralls]
+[![Go Report Card](https://goreportcard.com/badge/github.com/halostatue/dchook?style=for-the-badge "Go Report Card")](https://goreportcard.com/report/github.com/halostatue/dchook)
+[![Apache 2.0](https://img.shields.io/github/license/halostatue/dchook?style=for-the-badge&label=licence "Apache 2.0")](https://github.com/halostatue/dchook/blob/main/LICENCE.md)
+![Coveralls](https://img.shields.io/coverallsCoverage/github/halostatue/dchook?style=for-the-badge "Coverage")
 
 Secure webhook receiver for updating Docker Compose deployments. Sits somewhere
 between manual `scp` or `git pull`, and full orchestration -- perfect for
@@ -509,9 +510,4 @@ Run `just --list` in the `example/` directory to see available commands.
 
 [releases]: https://github.com/halostatue/dchook/releases
 [godoc]: https://pkg.go.dev/github.com/halostatue/dchook
-[goreport]: https://goreportcard.com/report/github.com/halostatue/dchook
-[licence]: https://github.com/halostatue/dchook/blob/main/LICENCE.md
 [shield-godoc]: https://img.shields.io/badge/go-reference-blue.svg?style=for-the-badge "Go Reference"
-[shield-goreport]: https://goreportcard.com/badge/github.com/halostatue/dchook?style=for-the-badge "Go Report Card"
-[shield-licence]: https://img.shields.io/github/license/halostatue/dchook?style=for-the-badge&label=licence "Apache 2.0"
-[shield-coveralls]: https://img.shields.io/coverallsCoverage/github/halostatue/dchook?style=for-the-badge "Coverage"
