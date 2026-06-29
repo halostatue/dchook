@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +18,7 @@ import (
 // HandlerConfig contains shared configuration for HTTP handlers.
 type HandlerConfig struct {
 	dockerAvailable   bool
-	ipExtractor       *clientip.Extractor
+	ipResolver        *clientip.Resolver
 	secret            string
 	allowedAlgorithms map[string]bool
 	adapter           ContainerAdapter
@@ -29,22 +27,9 @@ type HandlerConfig struct {
 	commit            string
 }
 
-func extractClientIP(extractor *clientip.Extractor, r *http.Request) string {
-	clientIP, err := extractor.ExtractAddr(r)
-	if err != nil {
-		//nolint:gosec // slog does not have log injection
-		slog.Warn(
-			"failed to extract client IP, using RemoteAddr",
-			"error", err,
-			"remote_addr", r.RemoteAddr,
-		)
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
-		}
-		clientIP = netip.MustParseAddr(ip)
-	}
-	return clientIP.String()
+func extractClientIP(resolver *clientip.Resolver, r *http.Request) string {
+	result := resolver.ResolveOperational(r, clientip.RemoteAddrFallback())
+	return result.IP.String()
 }
 
 func createDeployHandler(
@@ -74,7 +59,7 @@ func createDeployHandler(
 
 		r.Body = http.MaxBytesReader(w, r.Body, dchook.MaxRequestBodySize)
 
-		ip := extractClientIP(cfg.ipExtractor, r)
+		ip := extractClientIP(cfg.ipResolver, r)
 
 		if limiter.IsBanned(ip) {
 			//nolint:gosec // slog does not have log injection
@@ -245,7 +230,7 @@ func createStatusHandler(
 			return
 		}
 
-		ip := extractClientIP(cfg.ipExtractor, r)
+		ip := extractClientIP(cfg.ipResolver, r)
 
 		// Rate limiting
 		if !limiter.RecordSuccess(ip) {

@@ -39,12 +39,12 @@ up: _build _build_image
 
     cd {{ justfile_dir() }}
 
-    docker compose -f {{ app_compose }} -p compose up -d >/dev/null 2>&1
-    docker compose -f {{ dchook_compose }} up -d >/dev/null 2>&1
+    docker compose -f {{ app_compose }} -p compose up -d 2>&1
+    docker compose -f {{ dchook_compose }} up -d 2>&1
 
     echo "Waiting for dchook to be ready..."
     for i in $(seq 1 30); do
-      if curl -sf "${HEALTH_URL}" >/dev/null 2>&1; then
+      if curl -sf "${HEALTH_URL}" 2>&1; then
         break
       fi
 
@@ -65,8 +65,8 @@ down:
 
     cd {{ justfile_dir() }}
 
-    docker compose -f {{ dchook_compose }} down >/dev/null 2>&1
-    docker compose -f {{ app_compose }} -p compose down >/dev/null 2>&1
+    docker compose -f {{ dchook_compose }} down 2>&1
+    docker compose -f {{ app_compose }} -p compose down 2>&1
 
 # Restart dchook and app
 @restart: down up
@@ -309,4 +309,4 @@ banned:
     cd {{ justfile_dir() / ".." }} && go build -o {{ dchook_notify }} ./cmd/dchook-notify 2>&1 || { echo "Build failed"; exit 1; }
 
 @_build_image:
-    cd {{ justfile_dir() }} && docker build --build-arg RATE_LIMIT_WINDOW=5s -t example-dchook:latest -f Dockerfile .. >/dev/null 2>&1 || { echo "Image build failed"; exit 1; }
+    cd {{ justfile_dir() }} && docker build --build-arg RATE_LIMIT_WINDOW=5s -t example-dchook:latest -f Dockerfile .. 2>&1 || { echo "Image build failed"; exit 1; }
