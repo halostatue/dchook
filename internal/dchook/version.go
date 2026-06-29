@@ -71,13 +71,13 @@ func ParseVersion(s, commit string) (*Version, error) {
 // IsCompatible compares the current version alternate version to see if they are
 // compatible.
 //
-// - If either version is a development version, it's considered compatible.
+// - If either version is a development version, it's compatible only if allowDev is true.
 // - If the major versions differ, it is not compatible.
 // - If the minor versions differ, it is not compatible.
 // - If the patch versions match, the commit versions must match.
-func (v *Version) IsCompatible(o *Version) bool {
+func (v *Version) IsCompatible(o *Version, allowDev bool) bool {
 	if v.isDevVersion || o.isDevVersion {
-		return true
+		return allowDev
 	}
 
 	if v.major != o.major || v.minor != o.minor {

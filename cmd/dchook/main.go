@@ -3,7 +3,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/abczzz13/clientip"
 	"github.com/halostatue/dchook/internal/dchook"
+	flag "github.com/spf13/pflag"
 )
 
 var (
@@ -29,28 +29,36 @@ const (
 	httpReadTimeout  = 10 * time.Second
 	httpWriteTimeout = 10 * time.Second
 	httpIdleTimeout  = 60 * time.Second
+
+	devVersion = "dev"
 )
 
 var (
-	version = "dev"
+	version = devVersion
 	commit  = "unknown"
 
 	// Build-time configurable rate limit for testing, override with
 	// `-ldflags="-X main.rateLimitWindow=5s"`.
 	rateLimitWindow = "60s"
 
-	secretFile     = flag.String("s", "", "Path to webhook secret file")
-	composeFile    = flag.String("c", "", "Path to docker-compose.yml")
-	composeProject = flag.String("project", "", "Docker Compose project name")
-	bindAddress    = flag.String("b", "", "Bind address")
-	port           = flag.String("p", "", "HTTP port to listen on")
-	algorithms     = flag.String(
+	secretFile     = flag.StringP("secret-file", "s", "", "Path to webhook secret file")
+	composeFile    = flag.StringP("compose-file", "c", "", "Path to docker-compose.yml")
+	composeProject = flag.StringP("project", "P", "", "Docker Compose project name")
+	bindAddress    = flag.StringP("bind-address", "b", "", "Bind address")
+	port           = flag.StringP("port", "p", "", "HTTP port to listen on")
+	algorithms     = flag.StringP(
 		"algorithms",
+		"a",
 		"sha256,sha384,sha512",
 		"Comma-separated list of allowed HMAC algorithms",
 	)
-	showVersion = flag.Bool("version", false, "Show version information")
-	showHelp    = flag.Bool("help", false, "Show help message")
+	allowDevVersions = flag.Bool(
+		"allow-dev-versions",
+		false,
+		"Allow dev version compatibility bypass",
+	)
+	showVersion = flag.BoolP("version", "V", false, "Show version information")
+	showHelp    = flag.BoolP("help", "h", false, "Show help message")
 )
 
 const (
@@ -96,7 +104,7 @@ Examples:
   %s
 
   # Using flags
-  %s -s /etc/dchook/secret -c /opt/app/docker-compose.yml --project myapp -p 8080
+  %s -s /etc/dchook/secret -c /opt/app/docker-compose.yml -P myapp -p 8080
 `, progName, progName)
 }
 
@@ -117,6 +125,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	if version == devVersion && !*allowDevVersions {
+		slog.Error("dev version requires --allow-dev-versions flag")
+		os.Exit(1)
+	}
+
 	// Initialize structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -131,7 +144,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	allowedAlgos, err := dchook.FlagValue(*algorithms, "DCHOOK_ALLOWED_ALGORITHMS", "-a")
+	allowedAlgos, err := dchook.FlagValue(
+		*algorithms,
+		"DCHOOK_ALLOWED_ALGORITHMS",
+		"--algorithms/-a",
+	)
 	if err != nil {
 		allowedAlgos = "sha256,sha384,sha512"
 	}
@@ -147,7 +164,11 @@ func main() {
 		}
 	}
 
-	composeFilePath, err := dchook.FlagValue(*composeFile, "DCHOOK_COMPOSE_FILE", "-c")
+	composeFilePath, err := dchook.FlagValue(
+		*composeFile,
+		"DCHOOK_COMPOSE_FILE",
+		"--compose-file/-c",
+	)
 	if err != nil {
 		slog.Error("missing compose file", "error", err)
 		os.Exit(1)
@@ -163,7 +184,7 @@ func main() {
 	projectName, _ := dchook.FlagValue(
 		*composeProject,
 		"DCHOOK_COMPOSE_PROJECT",
-		"--project",
+		"--project/-P",
 	)
 
 	if projectName != "" {
@@ -200,13 +221,13 @@ func main() {
 		dockerAvailable = false
 	}
 
-	listenAddr, err := dchook.FlagValue(*bindAddress, "DCHOOK_BIND_ADDRESS", "-b")
+	listenAddr, err := dchook.FlagValue(*bindAddress, "DCHOOK_BIND_ADDRESS", "--bind-address/-b")
 	if err != nil {
 		listenAddr = "127.0.0.1"
 	}
 
 	// Get port (flag overrides env var, defaults to 7999)
-	listenPort, err := dchook.FlagValue(*port, "DCHOOK_PORT", "-p")
+	listenPort, err := dchook.FlagValue(*port, "DCHOOK_PORT", "--port/-p")
 	if err != nil {
 		listenPort = "7999"
 	}
@@ -250,6 +271,7 @@ func main() {
 		history:           history,
 		version:           version,
 		commit:            commit,
+		allowDevVersions:  *allowDevVersions,
 	}
 
 	// Register handlers (most specific first)
@@ -283,7 +305,7 @@ func main() {
 }
 
 func readSecretFile() (string, error) {
-	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "-s")
+	secretFilePath, err := dchook.FlagValue(*secretFile, "DCHOOK_SECRET_FILE", "--secret-file/-s")
 	if err != nil {
 		return "", fmt.Errorf("secret file configuration: %w", err)
 	}

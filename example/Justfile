@@ -92,7 +92,14 @@ success:
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
     # Test backwards compatibility - no subcommand defaults to deploy
-    if output=$({{ dchook_notify }} -j payload.json); then
+    if output=$({{ dchook_notify }} --allow-dev-versions -j payload.json 2>/dev/null); then
+      # Validate response structure: must have deployment_id
+      if ! echo "$output" | jq -e '.deployment_id' >/dev/null 2>&1; then
+        echo "𐄂 Deploy response missing deployment_id field"
+        echo "Response: $output"
+        exit 1
+      fi
+
       deployment_id=$(echo "$output" | jq -r '.deployment_id')
       echo "✓ Successful dchook trigger (deployment: ${deployment_id})"
     else
@@ -114,7 +121,23 @@ status deployment_id:
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
     echo "Querying deployment status: {{ deployment_id }}"
-    if {{ dchook_notify }} status {{ deployment_id }}; then
+    if output=$({{ dchook_notify }} --allow-dev-versions status {{ deployment_id }}); then
+      # Validate response structure: {dchook: {version, commit}, deployment: {...}}
+      if ! echo "$output" | jq -e '.dchook.version' >/dev/null 2>&1; then
+        echo "𐄂 Status response missing dchook.version"
+        echo "Response: $output"
+        exit 1
+      fi
+      if ! echo "$output" | jq -e '.dchook.commit' >/dev/null 2>&1; then
+        echo "𐄂 Status response missing dchook.commit"
+        echo "Response: $output"
+        exit 1
+      fi
+      if ! echo "$output" | jq -e '.deployment' >/dev/null 2>&1; then
+        echo "𐄂 Status response missing deployment object"
+        echo "Response: $output"
+        exit 1
+      fi
       echo "✓ Status query successful"
     else
       status=$?
@@ -133,8 +156,25 @@ list:
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
     echo "Querying deployment list..."
-    if {{ dchook_notify }} list | jq .; then
+    if output=$({{ dchook_notify }} --allow-dev-versions list); then
+      # Validate response structure: {dchook: {version, commit}, deployments: [...]}
+      if ! echo "$output" | jq -e '.dchook.version' >/dev/null 2>&1; then
+        echo "𐄂 List response missing dchook.version"
+        echo "Response: $output"
+        exit 1
+      fi
+      if ! echo "$output" | jq -e '.dchook.commit' >/dev/null 2>&1; then
+        echo "𐄂 List response missing dchook.commit"
+        echo "Response: $output"
+        exit 1
+      fi
+      if ! echo "$output" | jq -e '.deployments | type == "array"' >/dev/null 2>&1; then
+        echo "𐄂 List response missing deployments array"
+        echo "Response: $output"
+        exit 1
+      fi
       echo "✓ List query successful"
+      echo "$output" | jq .
     else
       status=$?
       echo "𐄂 List query failed (exit code ${status})"
@@ -153,7 +193,7 @@ multi-deploy:
 
     echo "Triggering multiple deployments..."
     for i in {1..3}; do
-      if output=$({{ dchook_notify }} -j payload.json); then
+      if output=$({{ dchook_notify }} --allow-dev-versions -j payload.json); then
         deployment_id=$(echo "$output" | jq -r '.deployment_id')
         echo "✓ Deployment ${i}: ${deployment_id}"
       else
@@ -164,7 +204,7 @@ multi-deploy:
     done
 
     echo "Querying deployment list..."
-    if {{ dchook_notify }} list; then
+    if {{ dchook_notify }} --allow-dev-versions list; then
       echo "✓ List shows multiple deployments"
     else
       echo "𐄂 List query failed"
@@ -181,7 +221,7 @@ rate-limited:
 
     export DCHOOK_SECRET_FILE={{ client_secret }}
 
-    if output=$({{ dchook_notify }} -j deploy payload.json); then
+    if output=$({{ dchook_notify }} --allow-dev-versions -j deploy payload.json); then
       deployment_id=$(echo "$output" | jq -r '.deployment_id')
       echo "✓ Successful dchook trigger (deployment: ${deployment_id})"
     else
@@ -190,7 +230,7 @@ rate-limited:
       exit ${status}
     fi
 
-    if {{ dchook_notify }} -q deploy payload.json; then
+    if {{ dchook_notify }} --allow-dev-versions -q deploy payload.json; then
       echo "𐄂 dchook trigger was not rate limited"
       exit 1
     else
@@ -220,7 +260,7 @@ failed:
     chmod 600 "${DCHOOK_SECRET_FILE}"
 
     # Test backwards compatibility - no subcommand defaults to deploy
-    if {{ dchook_notify }} -q payload.json; then
+    if {{ dchook_notify }} --allow-dev-versions -q payload.json; then
       echo "✗ dchook trigger did not fail with bad secret"
       exit 1
     else
@@ -250,7 +290,7 @@ banned:
     chmod 600 "${DCHOOK_SECRET_FILE}"
 
     echo "Sending first failed webhook..."
-    if {{ dchook_notify }} -q deploy payload.json; then
+    if {{ dchook_notify }} --allow-dev-versions -q deploy payload.json; then
       echo "✗ First request should have failed"
       exit 1
     else
@@ -264,7 +304,7 @@ banned:
     fi
 
     echo "Sending second failed webhook (triggers ban)..."
-    if {{ dchook_notify }} -q deploy payload.json; then
+    if {{ dchook_notify }} --allow-dev-versions -q deploy payload.json; then
       echo "✗ Second request should have failed"
       exit 1
     else
@@ -278,7 +318,7 @@ banned:
     fi
 
     echo "Sending third request (should be banned)..."
-    if {{ dchook_notify }} -q deploy payload.json; then
+    if {{ dchook_notify }} --allow-dev-versions -q deploy payload.json; then
       echo "✗ Third request should have been banned"
       exit 1
     else

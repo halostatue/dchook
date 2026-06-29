@@ -25,6 +25,7 @@ type HandlerConfig struct {
 	history           *DeploymentHistory
 	version           string
 	commit            string
+	allowDevVersions  bool
 }
 
 func extractClientIP(resolver *clientip.Resolver, r *http.Request) string {
@@ -138,6 +139,7 @@ func createDeployHandler(
 			cfg.version,
 			envelope.Dchook.Commit,
 			cfg.commit,
+			cfg.allowDevVersions,
 		) {
 			slog.Warn(
 				"version mismatch",

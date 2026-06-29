@@ -4,3 +4,9 @@ module github.com/halostatue/dchook
 go 1.24.9
 
 require github.com/abczzz13/clientip v0.1.0
+
+require (
+	github.com/itchyny/gojq v0.12.19 // indirect
+	github.com/itchyny/timefmt-go v0.1.8 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+)

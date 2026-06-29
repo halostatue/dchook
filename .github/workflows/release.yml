@@ -20,7 +20,7 @@ jobs:
       contents: write # Releases binary artifacts
       id-token: write # Keyless signing with cosign
       attestations: write # GitHub attestations
-      artifact-metadada: write # GitHub attestations
+      artifact-metadata: write # GitHub attestations
 
     steps:
       - name: Checkout

@@ -2,6 +2,7 @@ services:
   # The dchook listener
   dchook:
     image: example-dchook:latest
+    command: ["--allow-dev-versions"]
     ports:
       - "7999:7999"
     volumes:
