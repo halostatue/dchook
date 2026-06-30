@@ -9,9 +9,7 @@ before:
     - go mod download
 
 builds:
-  - id: dchook
-    main: ./cmd/dchook
-    binary: dchook
+  - main: ./...
     env:
       - CGO_ENABLED=0
     goos:
@@ -25,29 +23,13 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
+      - -X main.date={{.CommitTimestamp}}
     flags:
       - -trimpath
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  - id: dchook-notify
-    main: ./cmd/dchook-notify
-    binary: dchook-notify
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - darwin
-      - linux
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-    flags:
-      - -trimpath
-    mod_timestamp: "{{ .CommitTimestamp }}"
+gomod:
+  proxy: true
 
 archives:
   - formats: [tar.gz]
@@ -92,7 +74,6 @@ release:
   github:
     owner: halostatue
     name: dchook
-  use_existing_draft: true
   draft: false
   name_template: "{{.ProjectName}} v{{.Version}}"
   header: |

@@ -1,6 +1,8 @@
 # `dchook` Changelog
 
-## 1.3.0 / 2026-06-29
+## 1.3.1 / 2026-06-29
+
+Release 1.3.0 was skipped because of a publishing error with immutable releases.
 
 ### New Feature
 
