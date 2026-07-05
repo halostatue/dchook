@@ -1,5 +1,13 @@
 # `dchook` Changelog
 
+## 1.3.2 / 2026-07-04
+
+### New Feature
+
+- `dchook-notify` subcommands `status` and `list` now accept a `-t`/`--table`
+  parameter to output values in a human readable format. The default remains
+  JSON output.
+
 ## 1.3.1 / 2026-06-29
 
 Release 1.3.0 was skipped because of a publishing error with immutable releases.
