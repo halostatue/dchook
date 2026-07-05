@@ -68,8 +68,10 @@ var (
 		false,
 		"Quiet mode (suppress output, return only exit code)",
 	)
-	jsonOutput       = flag.BoolP("json", "j", false, "JSON output mode (machine-readable)")
-	jqExpr           = flag.String("jq", "", "jq expression to filter JSON response")
+	jsonOutput  = flag.BoolP("json", "j", false, "JSON output mode (machine-readable)")
+	tableOutput = flag.BoolP("table", "t", false, "Human-readable table output (status/list only)")
+	jqExpr      = flag.String("jq", "", "jq expression to filter JSON response")
+
 	allowDevVersions = flag.Bool(
 		"allow-dev-versions",
 		false,
@@ -100,13 +102,15 @@ func successf(format string, args ...any) {
 }
 
 // outputJSON prints JSON data, optionally filtered through a jq expression.
-func outputJSON(data []byte) {
+//
+//nolint:errcheck // Best-effort output to writer
+func outputJSON(w io.Writer, data []byte) {
 	if *quiet {
 		return
 	}
 
 	if *jqExpr == "" {
-		fmt.Println(string(data))
+		fmt.Fprintln(w, string(data))
 		return
 	}
 
@@ -132,13 +136,13 @@ func outputJSON(data []byte) {
 
 		switch val := v.(type) {
 		case string:
-			fmt.Println(val)
+			fmt.Fprintln(w, val)
 		default:
 			out, err := json.Marshal(v)
 			if err != nil {
 				haltf(exitPayloadError, "Error: --jq result serialization failed: %v", err)
 			}
-			fmt.Println(string(out))
+			fmt.Fprintln(w, string(out))
 		}
 	}
 }
@@ -174,7 +178,8 @@ func main() {
 	} else {
 		fmt.Fprintf(
 			os.Stderr,
-			"Warning: implicit deploy subcommand is deprecated; use 'dchook-notify deploy' explicitly (will be an error in v2)\n",
+			"Warning: implicit deploy subcommand is deprecated; "+
+				"use 'dchook-notify deploy' explicitly (will be an error in v2)\n",
 		)
 		subcommand = subcommandDeploy
 	}
@@ -216,7 +221,8 @@ Options:
 
 	//nolint:errcheck,gosec // Writing to stderr/stdout
 	fmt.Fprintf(w, `
-Note that -q takes precedence over -j and --jq. --jq implies -j.
+Note that -q takes precedence over -j, -t, and --jq. --jq implies -j and
+overrides -t.
 
 Environment Variables:
   DCHOOK_URL           *    Webhook endpoint URL
@@ -395,7 +401,7 @@ func handleDeployResponse(resp *http.Response, respBody []byte) {
 func handleAcceptedDeploy(resp *http.Response, respBody []byte) {
 	// --jq implies JSON output mode
 	if *jqExpr != "" {
-		outputJSON(respBody)
+		outputJSON(os.Stdout, respBody)
 		return
 	}
 
@@ -467,7 +473,14 @@ func getConfig() (string, string, string) {
 	return webhookURL, secret, algo
 }
 
-func makeStatusRequest(endpoint, payload, secret, algo string) {
+type statusMode int
+
+const (
+	modeStatus statusMode = iota
+	modeList
+)
+
+func makeStatusRequest(endpoint, payload, secret, algo string, mode statusMode) {
 	timestamp := strconv.FormatInt(time.Now().UnixMicro(), 10)
 
 	var signaturePayload string
@@ -509,7 +522,11 @@ func makeStatusRequest(endpoint, payload, secret, algo string) {
 	}
 
 	if resp.StatusCode == http.StatusOK {
-		outputJSON(respBody)
+		if *tableOutput && *jqExpr == "" {
+			outputTable(os.Stdout, respBody, mode)
+		} else {
+			outputJSON(os.Stdout, respBody)
+		}
 	} else {
 		msg := "Request failed (status: " + strconv.Itoa(resp.StatusCode) + ")"
 		if len(respBody) > 0 {
@@ -527,6 +544,136 @@ func makeStatusRequest(endpoint, payload, secret, algo string) {
 	}
 }
 
+type deploymentJSON struct {
+	ID        string          `json:"id"`
+	Timestamp time.Time       `json:"timestamp"`
+	Status    string          `json:"status"`
+	Request   json.RawMessage `json:"request,omitempty"`
+	Pull      *resultJSON     `json:"pull,omitempty"`
+	Restart   *resultJSON     `json:"restart,omitempty"`
+}
+
+type resultJSON struct {
+	ExitCode   int    `json:"exit_code"`
+	Output     string `json:"output"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+func outputTable(w io.Writer, data []byte, mode statusMode) {
+	if *quiet {
+		return
+	}
+
+	switch mode {
+	case modeStatus:
+		outputStatusTable(w, data)
+	case modeList:
+		outputListTable(w, data)
+	}
+}
+
+//nolint:errcheck // Best-effort output to writer
+func outputStatusTable(w io.Writer, data []byte) {
+	var resp struct {
+		Deployment deploymentJSON `json:"deployment"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		haltf(exitPayloadError, "Error: failed to parse response for table output: %v", err)
+	}
+
+	d := resp.Deployment
+
+	fmt.Fprintf(
+		w,
+		"%-14s  %-25s  %-11s  %-9s  %s\n",
+		"ID", "TIMESTAMP", "STATUS", "PULL", "RESTART",
+	)
+	fmt.Fprintf(
+		w,
+		"%-14s  %-25s  %-11s  %-9s  %s\n",
+		"──────────────", "─────────────────────────", "───────────", "─────────", "───────",
+	)
+	fmt.Fprintf(
+		w,
+		"%-14s  %-25s  %-11s  %-9s  %s\n",
+		d.ID,
+		d.Timestamp.Format(time.RFC3339),
+		d.Status,
+		formatResult(d.Pull),
+		formatResult(d.Restart),
+	)
+}
+
+func formatResult(r *resultJSON) string {
+	if r == nil {
+		return "—"
+	}
+
+	return fmt.Sprintf("%s/%d", formatDuration(r.DurationMs), r.ExitCode)
+}
+
+//nolint:errcheck // Best-effort output to writer
+func outputListTable(w io.Writer, data []byte) {
+	var resp struct {
+		Deployments []deploymentJSON `json:"deployments"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		haltf(exitPayloadError, "Error: failed to parse response for table output: %v", err)
+	}
+
+	if len(resp.Deployments) == 0 {
+		fmt.Fprintln(w, "No deployments found.")
+		return
+	}
+
+	// Print header
+	fmt.Fprintf(
+		w,
+		"%-14s  %-25s  %-11s  %-9s  %s\n",
+		"ID", "TIMESTAMP", "STATUS", "PULL", "RESTART",
+	)
+	fmt.Fprintf(
+		w,
+		"%-14s  %-25s  %-11s  %-9s  %s\n",
+		"──────────────", "─────────────────────────", "───────────", "─────────", "───────",
+	)
+
+	for _, d := range resp.Deployments {
+		fmt.Fprintf(
+			w,
+			"%-14s  %-25s  %-11s  %-9s  %s\n",
+			d.ID,
+			d.Timestamp.Format(time.RFC3339),
+			d.Status,
+			formatResult(d.Pull),
+			formatResult(d.Restart),
+		)
+	}
+
+	fmt.Fprintf(w, "\n%d deployment(s)\n", len(resp.Deployments))
+}
+
+func formatDuration(ms int64) string {
+	const (
+		msPerSecond  = 1000
+		secPerMinute = 60
+	)
+
+	if ms < msPerSecond {
+		return fmt.Sprintf("%dms", ms)
+	}
+
+	seconds := float64(ms) / float64(msPerSecond)
+	if seconds < secPerMinute {
+		return fmt.Sprintf("%.1fs", seconds)
+	}
+
+	minutes := int(seconds) / secPerMinute
+	secs := seconds - float64(minutes*secPerMinute)
+
+	return fmt.Sprintf("%dm%.1fs", minutes, secs)
+}
+
 func statusCommand(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "Usage: dchook-notify status <deployment-id>\n")
@@ -539,7 +686,9 @@ func statusCommand(args []string) {
 
 	baseURL, secret, algo := getConfig()
 	deploymentID := args[0]
-	makeStatusRequest(baseURL+"/deploy/status/"+deploymentID, deploymentID, secret, algo)
+	makeStatusRequest(
+		baseURL+"/deploy/status/"+deploymentID, deploymentID, secret, algo, modeStatus,
+	)
 }
 
 func listCommand(args []string) {
@@ -553,5 +702,5 @@ func listCommand(args []string) {
 	}
 
 	baseURL, secret, algo := getConfig()
-	makeStatusRequest(baseURL+"/deploy/status", "", secret, algo)
+	makeStatusRequest(baseURL+"/deploy/status", "", secret, algo, modeList)
 }
